@@ -70,7 +70,6 @@ def login():
     st.info("💡 Consejo: Usa la tecla 'Tab' para pasar a la contraseña, y luego presiona 'Enter' para ingresar.")
     
     with st.form("login_form"):
-        # Se modificó la etiqueta según tu petición
         cedula = st.text_input("👤 Usuario")
         password = st.text_input("🔑 Contraseña", type="password")
         submit = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
@@ -158,6 +157,10 @@ def generar_excel_perfecto(df, nombre_hoja):
         worksheet.freeze_panes = "A2"
     return output.getvalue()
 
+# Callback para seleccionar todos los elementos dinámicamente
+def seleccionar_todos(nombre_pestana, opciones):
+    st.session_state[f"ms_del_{nombre_pestana}"] = opciones
+
 # --- 5. INTERFAZ DE PESTAÑAS DE TRABAJO ---
 nombres_pestanas = ["Minelba", "Kelvin", "Miguel", "Códigos SAP"]
 lista_tabs_mostrar = nombres_pestanas.copy()
@@ -242,19 +245,14 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                     else:
                         st.info("No tienes registros propios para modificar." if st.session_state.rol == "moderador" else "No hay datos para modificar.")
 
-            # SECCIÓN ELIMINAR MEJORADA CON "SELECCIONAR TODOS"
             with col_exp3:
                 with st.expander("🗑️ Eliminar artículos" if nombre_pestana != "Códigos SAP" else "🗑️ Eliminar Código"):
                     if not df_editable.empty:
                         opciones_eliminar = df_editable.apply(lambda r: f"ID: {r['id']} | {r['codigo_lamina']} - {r['descripcion']}", axis=1).tolist()
                         
-                        # Checkbox para seleccionar todo
-                        seleccionar_todos = st.checkbox("☑️ Seleccionar Todos", key=f"chk_all_{nombre_pestana}")
+                        st.button("☑️ Seleccionar Todos", key=f"btn_all_{nombre_pestana}", on_click=seleccionar_todos, args=(nombre_pestana, opciones_eliminar), use_container_width=True)
                         
-                        if seleccionar_todos:
-                            seleccion_eliminar = st.multiselect("Elige registros:", opciones_eliminar, default=opciones_eliminar, key=f"ms_del_{nombre_pestana}")
-                        else:
-                            seleccion_eliminar = st.multiselect("Elige registros:", opciones_eliminar, key=f"ms_del_{nombre_pestana}")
+                        seleccion_eliminar = st.multiselect("Elige registros:", opciones_eliminar, key=f"ms_del_{nombre_pestana}")
                         
                         if st.button("⚠️ Eliminar Seleccionados", key=f"btn_del_multi_{nombre_pestana}", type="primary", use_container_width=True):
                             if seleccion_eliminar:
@@ -310,7 +308,6 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
         st.write("---")
         col_down1, col_down2 = st.columns(2)
         
-        # IMPORTACIÓN INTELIGENTE CON ANTI-DUPLICADOS
         if st.session_state.rol in ["administrador", "boss"]:
             with col_down1:
                 st.subheader("📥 Importar Excel")
@@ -353,7 +350,6 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                             except (ValueError, TypeError):
                                 cant = 1
                             
-                            # LÓGICA ANTI-DUPLICADOS (Compara con los datos ya cargados en 'df')
                             es_duplicado = False
                             if not df.empty:
                                 if nombre_pestana == "Códigos SAP":
@@ -364,12 +360,10 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                                 if not coincidencia.empty:
                                     es_duplicado = True
                             
-                            # Solo se guarda si NO es un duplicado exacto
                             if not es_duplicado:
                                 guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
                                 registros_nuevos += 1
                         
-                        # Mensajes dinámicos según lo que ocurrió
                         if registros_nuevos > 0:
                             st.session_state.mensaje_toast = f"¡Se importaron {registros_nuevos} registros nuevos!"
                         else:
