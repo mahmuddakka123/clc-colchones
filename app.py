@@ -60,7 +60,7 @@ if 'creado_por' not in columnas_traslados:
 c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss') ON CONFLICT (cedula) DO NOTHING")
 c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador') ON CONFLICT (cedula) DO NOTHING")
 
-# --- 3. SISTEMA DE CONTROL DE SESIÓN (LOGIN) ---
+# --- 3. SISTEMA DE CONTROL DE SESIÓN (LOGIN INTELIGENTE) ---
 if 'usuario' not in st.session_state:
     st.session_state.usuario = None
     st.session_state.rol = None
@@ -69,28 +69,33 @@ def login():
     st.title("🛏️ CLC Colchones - Iniciar Sesión")
     st.info("Ingresa tus credenciales de acceso.")
     
-    # Uso de st.form para permitir inicio de sesión presionando "Enter"
-    with st.form("login_form"):
-        cedula = st.text_input("👤 Usuario (Cédula)")
-        password = st.text_input("🔑 Contraseña", type="password")
-        submit = st.form_submit_button("Ingresar", type="primary")
-        
-        if submit:
-            if cedula != "" and password != "":
-                c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula,))
-                resultado = c.fetchone()
-                if resultado:
-                    rol_bd, password_bd = resultado
-                    if password == password_bd:
-                        st.session_state.usuario = cedula
-                        st.session_state.rol = rol_bd
-                        st.rerun()
-                    else:
-                        st.error("Contraseña incorrecta.")
+    # Campo de usuario estándar
+    cedula = st.text_input("👤 Usuario (Cédula)", key="login_cedula_input")
+    
+    # NUEVO: Si el usuario ya escribió algo y presionó Enter, pasamos el foco automáticamente a la contraseña
+    enfocar_password = cedula.strip() != ""
+    
+    password = st.text_input("🔑 Contraseña", type="password", key="login_password_input", autofocus=enfocar_password)
+    
+    boton_ingresar = st.button("Ingresar", type="primary", use_container_width=True)
+    
+    # ACCIÓN: Se ejecuta si da clic al botón O si presiona Enter estando en la contraseña (ambos campos llenos)
+    if boton_ingresar or (cedula.strip() != "" and password.strip() != ""):
+        if cedula != "" and password != "":
+            c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula.strip(),))
+            resultado = c.fetchone()
+            if resultado:
+                rol_bd, password_bd = resultado
+                if password == password_bd:
+                    st.session_state.usuario = cedula.strip()
+                    st.session_state.rol = rol_bd
+                    st.rerun()
                 else:
-                    st.error("Este usuario no existe en el sistema.")
+                    st.error("Contraseña incorrecta.")
             else:
-                st.error("Por favor, llena ambos campos.")
+                st.error("Este usuario no existe en el sistema.")
+        else:
+            st.error("Por favor, llena ambos campos.")
 
 if st.session_state.usuario is None:
     login()
@@ -190,7 +195,6 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             
             with col_exp1:
                 with st.expander("➕ Agregar traslado"):
-                    # st.form con clear_on_submit=True vacía los campos automáticamente al guardar
                     with st.form(key=f"form_add_{nombre_pestana}", clear_on_submit=True):
                         nuevo_codigo = st.text_input("Código Alfanumérico")
                         nueva_desc = st.text_input("Descripción")
@@ -214,12 +218,10 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                         id_real_mod = int(articulo_mod.split(" | ")[0].replace("ID: ", ""))
                         fila_actual = df_editable[df_editable['id'] == id_real_mod].iloc[0]
                         
-                        # Corrección de StreamlitValueBelowMinError protegiendo el valor mínimo
                         val_cant = int(fila_actual['cantidad'])
                         if val_cant < 1:
                             val_cant = 1
                         
-                        # st.form para garantizar el reinicio al guardar
                         with st.form(key=f"form_edit_{nombre_pestana}_{id_real_mod}"):
                             m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']))
                             m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']))
@@ -295,44 +297,36 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                 archivo_subido = st.file_uploader("Sube un archivo .xlsx", type=["xlsx"], key=f"up_{nombre_pestana}_{st.session_state[nombre_clave_sesion]}")
                 
                 if archivo_subido is not None:
-                    # Sistema de adaptación automática de Excel
                     try:
                         df_importado = pd.read_excel(archivo_subido)
-                        # Limpiar nombres de columnas para facilitar la búsqueda en minúsculas
                         df_importado.columns = [str(c).lower().strip() for c in df_importado.columns]
                         
                         for index, row in df_importado.iterrows():
-                            # 1. Adaptar Código (Busca por nombre o toma la columna 1)
                             cod = "N/A"
                             if 'codigo_lamina' in df_importado.columns: cod = row['codigo_lamina']
                             elif 'código' in df_importado.columns: cod = row['código']
                             elif 'codigo' in df_importado.columns: cod = row['codigo']
                             elif len(df_importado.columns) > 0: cod = row.iloc[0]
                             
-                            # 2. Adaptar Descripción (Busca por nombre o toma la columna 2)
                             desc = "N/A"
                             if 'descripcion' in df_importado.columns: desc = row['descripcion']
                             elif 'descripción' in df_importado.columns: desc = row['descripción']
                             elif len(df_importado.columns) > 1: desc = row.iloc[1]
                             
-                            # 3. Adaptar Cantidad (Busca por nombre o toma la columna 3)
                             raw_cant = 1
                             if 'cantidad' in df_importado.columns: raw_cant = row['cantidad']
                             elif 'cant' in df_importado.columns: raw_cant = row['cant']
                             elif len(df_importado.columns) > 2: raw_cant = row.iloc[2]
                             
-                            # Limpieza final de datos para evitar errores en PostgreSQL
                             cod = str(cod).strip() if pd.notna(cod) else "N/A"
                             desc = str(desc).strip() if pd.notna(desc) else "N/A"
                             
                             try:
-                                # Convertimos a float primero por si el Excel exportó números como "1.0"
                                 cant = int(float(raw_cant)) 
                                 if cant < 1: cant = 1
                             except (ValueError, TypeError):
-                                cant = 1 # Si había texto o celdas vacías en la cantidad, pone 1 por seguridad
+                                cant = 1
                             
-                            # Guarda el registro ya reparado y adaptado
                             guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
                         
                         st.session_state.mensaje_toast = "¡Archivo adaptado e importado con éxito!"
@@ -418,3 +412,4 @@ if st.session_state.rol in ["administrador", "boss"]:
                     st.rerun()
 
 conn.close()
+
