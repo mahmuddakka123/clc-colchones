@@ -228,12 +228,13 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                         val_cant = int(fila_actual['cantidad'])
                         if val_cant < 1: val_cant = 1
                         
+                        # --- MODIFICACIÓN AQUÍ: LE SE ENVIARON 'KEY' ÚNICOS DEPENDIENTES DEL ID A LOS INPUTS ---
                         with st.form(key=f"form_edit_{nombre_pestana}_{id_real_mod}"):
-                            m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']))
-                            m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']))
+                            m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']), key=f"inp_cod_{nombre_pestana}_{id_real_mod}")
+                            m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']), key=f"inp_desc_{nombre_pestana}_{id_real_mod}")
                             
                             if nombre_pestana != "Códigos SAP":
-                                m_cant = st.number_input("Editar Cantidad", min_value=1, value=val_cant)
+                                m_cant = st.number_input("Editar Cantidad", min_value=1, value=val_cant, key=f"inp_cant_{nombre_pestana}_{id_real_mod}")
                             else:
                                 m_cant = val_cant
                                 
