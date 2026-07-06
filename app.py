@@ -60,42 +60,36 @@ if 'creado_por' not in columnas_traslados:
 c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss') ON CONFLICT (cedula) DO NOTHING")
 c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador') ON CONFLICT (cedula) DO NOTHING")
 
-# --- 3. SISTEMA DE CONTROL DE SESIÓN (LOGIN INTELIGENTE) ---
+# --- 3. SISTEMA DE CONTROL DE SESIÓN (LOGIN ESTABLE) ---
 if 'usuario' not in st.session_state:
     st.session_state.usuario = None
     st.session_state.rol = None
 
 def login():
     st.title("🛏️ CLC Colchones - Iniciar Sesión")
-    st.info("Ingresa tus credenciales de acceso.")
+    st.info("💡 Consejo: Usa la tecla 'Tab' para pasar a la contraseña, y luego presiona 'Enter' para ingresar.")
     
-    # Campo de usuario estándar
-    cedula = st.text_input("👤 Usuario (Cédula)", key="login_cedula_input")
-    
-    # NUEVO: Si el usuario ya escribió algo y presionó Enter, pasamos el foco automáticamente a la contraseña
-    enfocar_password = cedula.strip() != ""
-    
-    password = st.text_input("🔑 Contraseña", type="password", key="login_password_input", autofocus=enfocar_password)
-    
-    boton_ingresar = st.button("Ingresar", type="primary", use_container_width=True)
-    
-    # ACCIÓN: Se ejecuta si da clic al botón O si presiona Enter estando en la contraseña (ambos campos llenos)
-    if boton_ingresar or (cedula.strip() != "" and password.strip() != ""):
-        if cedula != "" and password != "":
-            c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula.strip(),))
-            resultado = c.fetchone()
-            if resultado:
-                rol_bd, password_bd = resultado
-                if password == password_bd:
-                    st.session_state.usuario = cedula.strip()
-                    st.session_state.rol = rol_bd
-                    st.rerun()
+    with st.form("login_form"):
+        cedula = st.text_input("👤 Usuario (Cédula)")
+        password = st.text_input("🔑 Contraseña", type="password")
+        submit = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
+        
+        if submit:
+            if cedula.strip() != "" and password.strip() != "":
+                c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula.strip(),))
+                resultado = c.fetchone()
+                if resultado:
+                    rol_bd, password_bd = resultado
+                    if password.strip() == password_bd:
+                        st.session_state.usuario = cedula.strip()
+                        st.session_state.rol = rol_bd
+                        st.rerun()
+                    else:
+                        st.error("Contraseña incorrecta.")
                 else:
-                    st.error("Contraseña incorrecta.")
+                    st.error("Este usuario no existe en el sistema.")
             else:
-                st.error("Este usuario no existe en el sistema.")
-        else:
-            st.error("Por favor, llena ambos campos.")
+                st.error("Por favor, llena ambos campos.")
 
 if st.session_state.usuario is None:
     login()
