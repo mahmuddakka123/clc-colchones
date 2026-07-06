@@ -68,25 +68,29 @@ if 'usuario' not in st.session_state:
 def login():
     st.title("🛏️ CLC Colchones - Iniciar Sesión")
     st.info("Ingresa tus credenciales de acceso.")
-    cedula = st.text_input("👤 Usuario (Cédula)")
-    password = st.text_input("🔑 Contraseña", type="password")
     
-    if st.button("Ingresar", type="primary"):
-        if cedula != "" and password != "":
-            c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula,))
-            resultado = c.fetchone()
-            if resultado:
-                rol_bd, password_bd = resultado
-                if password == password_bd:
-                    st.session_state.usuario = cedula
-                    st.session_state.rol = rol_bd
-                    st.rerun()
+    # NUEVO: Uso de st.form para permitir inicio de sesión presionando "Enter"
+    with st.form("login_form"):
+        cedula = st.text_input("👤 Usuario (Cédula)")
+        password = st.text_input("🔑 Contraseña", type="password")
+        submit = st.form_submit_button("Ingresar", type="primary")
+        
+        if submit:
+            if cedula != "" and password != "":
+                c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula,))
+                resultado = c.fetchone()
+                if resultado:
+                    rol_bd, password_bd = resultado
+                    if password == password_bd:
+                        st.session_state.usuario = cedula
+                        st.session_state.rol = rol_bd
+                        st.rerun()
+                    else:
+                        st.error("Contraseña incorrecta.")
                 else:
-                    st.error("Contraseña incorrecta.")
+                    st.error("Este usuario no existe en el sistema.")
             else:
-                st.error("Este usuario no existe en el sistema.")
-        else:
-            st.error("Por favor, llena ambos campos.")
+                st.error("Por favor, llena ambos campos.")
 
 if st.session_state.usuario is None:
     login()
@@ -186,16 +190,20 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             
             with col_exp1:
                 with st.expander("➕ Agregar traslado"):
-                    nuevo_codigo = st.text_input("Código Alfanumérico", key=f"cod_{nombre_pestana}")
-                    nueva_desc = st.text_input("Descripción", key=f"desc_{nombre_pestana}")
-                    nueva_cant = st.number_input("Cantidad", min_value=1, value=1, key=f"cant_{nombre_pestana}")
-                    if st.button("Agregar a la tabla", key=f"btn_add_{nombre_pestana}", use_container_width=True):
-                        if nuevo_codigo != "":
-                            guardar_nuevo_registro(nombre_pestana, nuevo_codigo, nueva_desc, nueva_cant, st.session_state.usuario)
-                            st.session_state.mensaje_toast = "Registro añadido correctamente."
-                            st.rerun()
-                        else:
-                            st.error("El código es obligatorio.")
+                    # NUEVO: st.form con clear_on_submit=True vacía los campos automáticamente al guardar
+                    with st.form(key=f"form_add_{nombre_pestana}", clear_on_submit=True):
+                        nuevo_codigo = st.text_input("Código Alfanumérico")
+                        nueva_desc = st.text_input("Descripción")
+                        nueva_cant = st.number_input("Cantidad", min_value=1, value=1)
+                        submit_add = st.form_submit_button("Agregar a la tabla", use_container_width=True)
+                        
+                        if submit_add:
+                            if nuevo_codigo != "":
+                                guardar_nuevo_registro(nombre_pestana, nuevo_codigo, nueva_desc, nueva_cant, st.session_state.usuario)
+                                st.session_state.mensaje_toast = "Registro añadido correctamente."
+                                st.rerun()
+                            else:
+                                st.error("El código es obligatorio.")
             
             with col_exp2:
                 with st.expander("📝 Modificar artículo"):
@@ -206,14 +214,22 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                         id_real_mod = int(articulo_mod.split(" | ")[0].replace("ID: ", ""))
                         fila_actual = df_editable[df_editable['id'] == id_real_mod].iloc[0]
                         
-                        m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']), key=f"m_cod_{nombre_pestana}_{id_real_mod}")
-                        m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']), key=f"m_desc_{nombre_pestana}_{id_real_mod}")
-                        m_cant = st.number_input("Editar Cantidad", min_value=1, value=int(fila_actual['cantidad']), key=f"m_cant_{nombre_pestana}_{id_real_mod}")
+                        # NUEVO: Corrección de StreamlitValueBelowMinError protegiendo el valor mínimo
+                        val_cant = int(fila_actual['cantidad'])
+                        if val_cant < 1:
+                            val_cant = 1
                         
-                        if st.button("💾 Guardar Cambios", key=f"btn_upd_{nombre_pestana}", use_container_width=True):
-                            actualizar_registro(id_real_mod, m_cod, m_desc, m_cant)
-                            st.session_state.mensaje_toast = "Registro actualizado con éxito."
-                            st.rerun()
+                        # NUEVO: st.form para garantizar el reinicio al guardar
+                        with st.form(key=f"form_edit_{nombre_pestana}_{id_real_mod}"):
+                            m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']))
+                            m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']))
+                            m_cant = st.number_input("Editar Cantidad", min_value=1, value=val_cant)
+                            
+                            submit_upd = st.form_submit_button("💾 Guardar Cambios", use_container_width=True)
+                            if submit_upd:
+                                actualizar_registro(id_real_mod, m_cod, m_desc, m_cant)
+                                st.session_state.mensaje_toast = "Registro actualizado con éxito."
+                                st.rerun()
                     else:
                         st.info("No tienes registros propios para modificar." if st.session_state.rol == "moderador" else "No hay datos para modificar.")
 
@@ -279,16 +295,38 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                 archivo_subido = st.file_uploader("Sube un archivo .xlsx", type=["xlsx"], key=f"up_{nombre_pestana}_{st.session_state[nombre_clave_sesion]}")
                 
                 if archivo_subido is not None:
-                    df_importado = pd.read_excel(archivo_subido)
-                    for index, row in df_importado.iterrows():
-                        cod = str(row.get('codigo_lamina', row.get('Código', row.get('codigo', 'N/A'))))
-                        desc = str(row.get('descripcion', row.get('Descripción', row.get('descripcion', 'N/A'))))
-                        cant = int(row.get('cantidad', row.get('Cantidad', row.get('cantidad', 0))))
-                        guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
-                    
-                    st.session_state.mensaje_toast = "¡Datos importados con éxito!"
-                    st.session_state[nombre_clave_sesion] += 1
-                    st.rerun()
+                    # NUEVO: Sistema anti-riesgos. Bloquea excels corruptos o inválidos sin tirar la app.
+                    try:
+                        df_importado = pd.read_excel(archivo_subido)
+                        columnas_min = [str(c).lower() for c in df_importado.columns]
+                        
+                        # Verifica si el archivo tiene un formato que el código entiende
+                        tiene_codigo = any(c in columnas_min for c in ['codigo_lamina', 'código', 'codigo'])
+                        tiene_cantidad = any(c in columnas_min for c in ['cantidad', 'cant'])
+                        
+                        if not (tiene_codigo and tiene_cantidad):
+                            st.error("🚨 Archivo rechazado por incompatibilidad de formato. El Excel debe tener obligatoriamente columnas llamadas 'Código' y 'Cantidad' para no dañar el sistema.")
+                        else:
+                            for index, row in df_importado.iterrows():
+                                cod = str(row.get('codigo_lamina', row.get('Código', row.get('codigo', 'N/A'))))
+                                desc = str(row.get('descripcion', row.get('Descripción', row.get('descripcion', 'N/A'))))
+                                
+                                # Sanitización de seguridad para la cantidad
+                                raw_cant = row.get('cantidad', row.get('Cantidad', 1))
+                                try:
+                                    cant = int(raw_cant)
+                                    if cant < 1: cant = 1
+                                except (ValueError, TypeError):
+                                    cant = 1 # Valor por defecto si ponen letras en la columna de cantidad
+                                
+                                guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
+                            
+                            st.session_state.mensaje_toast = "¡Datos importados con éxito y guardados de forma segura!"
+                            st.session_state[nombre_clave_sesion] += 1
+                            st.rerun()
+                            
+                    except Exception as e:
+                        st.error("🚨 Peligro: El archivo cargado está dañado, corrupto o contiene un riesgo en su código interno. Ha sido bloqueado por el sistema de seguridad.")
 
         with col_down2:
             st.subheader("📤 Exportar Reporte")
@@ -318,7 +356,7 @@ if st.session_state.rol in ["administrador", "boss"]:
         col_adm1, col_adm2 = st.columns(2)
         
         with col_adm1:
-            with st.form("nuevo_usuario"):
+            with st.form("nuevo_usuario", clear_on_submit=True):
                 st.subheader("➕ Crear / Modificar Usuario")
                 n_cedula = st.text_input("Usuario (Cédula)")
                 n_password = st.text_input("Nueva Contraseña")
@@ -366,3 +404,4 @@ if st.session_state.rol in ["administrador", "boss"]:
                     st.rerun()
 
 conn.close()
+
