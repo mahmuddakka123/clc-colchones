@@ -418,4 +418,3 @@ if st.session_state.rol in ["administrador", "boss"]:
                     st.rerun()
 
 conn.close()
-
