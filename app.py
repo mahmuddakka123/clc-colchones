@@ -69,7 +69,7 @@ def login():
     st.title("🛏️ CLC Colchones - Iniciar Sesión")
     st.info("Ingresa tus credenciales de acceso.")
     
-    # NUEVO: Uso de st.form para permitir inicio de sesión presionando "Enter"
+    # Uso de st.form para permitir inicio de sesión presionando "Enter"
     with st.form("login_form"):
         cedula = st.text_input("👤 Usuario (Cédula)")
         password = st.text_input("🔑 Contraseña", type="password")
@@ -190,7 +190,7 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             
             with col_exp1:
                 with st.expander("➕ Agregar traslado"):
-                    # NUEVO: st.form con clear_on_submit=True vacía los campos automáticamente al guardar
+                    # st.form con clear_on_submit=True vacía los campos automáticamente al guardar
                     with st.form(key=f"form_add_{nombre_pestana}", clear_on_submit=True):
                         nuevo_codigo = st.text_input("Código Alfanumérico")
                         nueva_desc = st.text_input("Descripción")
@@ -214,12 +214,12 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                         id_real_mod = int(articulo_mod.split(" | ")[0].replace("ID: ", ""))
                         fila_actual = df_editable[df_editable['id'] == id_real_mod].iloc[0]
                         
-                        # NUEVO: Corrección de StreamlitValueBelowMinError protegiendo el valor mínimo
+                        # Corrección de StreamlitValueBelowMinError protegiendo el valor mínimo
                         val_cant = int(fila_actual['cantidad'])
                         if val_cant < 1:
                             val_cant = 1
                         
-                        # NUEVO: st.form para garantizar el reinicio al guardar
+                        # st.form para garantizar el reinicio al guardar
                         with st.form(key=f"form_edit_{nombre_pestana}_{id_real_mod}"):
                             m_cod = st.text_input("Editar Código", value=str(fila_actual['codigo_lamina']))
                             m_desc = st.text_input("Editar Descripción", value=str(fila_actual['descripcion']))
@@ -295,38 +295,52 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                 archivo_subido = st.file_uploader("Sube un archivo .xlsx", type=["xlsx"], key=f"up_{nombre_pestana}_{st.session_state[nombre_clave_sesion]}")
                 
                 if archivo_subido is not None:
-                    # NUEVO: Sistema anti-riesgos. Bloquea excels corruptos o inválidos sin tirar la app.
+                    # Sistema de adaptación automática de Excel
                     try:
                         df_importado = pd.read_excel(archivo_subido)
-                        columnas_min = [str(c).lower() for c in df_importado.columns]
+                        # Limpiar nombres de columnas para facilitar la búsqueda en minúsculas
+                        df_importado.columns = [str(c).lower().strip() for c in df_importado.columns]
                         
-                        # Verifica si el archivo tiene un formato que el código entiende
-                        tiene_codigo = any(c in columnas_min for c in ['codigo_lamina', 'código', 'codigo'])
-                        tiene_cantidad = any(c in columnas_min for c in ['cantidad', 'cant'])
+                        for index, row in df_importado.iterrows():
+                            # 1. Adaptar Código (Busca por nombre o toma la columna 1)
+                            cod = "N/A"
+                            if 'codigo_lamina' in df_importado.columns: cod = row['codigo_lamina']
+                            elif 'código' in df_importado.columns: cod = row['código']
+                            elif 'codigo' in df_importado.columns: cod = row['codigo']
+                            elif len(df_importado.columns) > 0: cod = row.iloc[0]
+                            
+                            # 2. Adaptar Descripción (Busca por nombre o toma la columna 2)
+                            desc = "N/A"
+                            if 'descripcion' in df_importado.columns: desc = row['descripcion']
+                            elif 'descripción' in df_importado.columns: desc = row['descripción']
+                            elif len(df_importado.columns) > 1: desc = row.iloc[1]
+                            
+                            # 3. Adaptar Cantidad (Busca por nombre o toma la columna 3)
+                            raw_cant = 1
+                            if 'cantidad' in df_importado.columns: raw_cant = row['cantidad']
+                            elif 'cant' in df_importado.columns: raw_cant = row['cant']
+                            elif len(df_importado.columns) > 2: raw_cant = row.iloc[2]
+                            
+                            # Limpieza final de datos para evitar errores en PostgreSQL
+                            cod = str(cod).strip() if pd.notna(cod) else "N/A"
+                            desc = str(desc).strip() if pd.notna(desc) else "N/A"
+                            
+                            try:
+                                # Convertimos a float primero por si el Excel exportó números como "1.0"
+                                cant = int(float(raw_cant)) 
+                                if cant < 1: cant = 1
+                            except (ValueError, TypeError):
+                                cant = 1 # Si había texto o celdas vacías en la cantidad, pone 1 por seguridad
+                            
+                            # Guarda el registro ya reparado y adaptado
+                            guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
                         
-                        if not (tiene_codigo and tiene_cantidad):
-                            st.error("🚨 Archivo rechazado por incompatibilidad de formato. El Excel debe tener obligatoriamente columnas llamadas 'Código' y 'Cantidad' para no dañar el sistema.")
-                        else:
-                            for index, row in df_importado.iterrows():
-                                cod = str(row.get('codigo_lamina', row.get('Código', row.get('codigo', 'N/A'))))
-                                desc = str(row.get('descripcion', row.get('Descripción', row.get('descripcion', 'N/A'))))
-                                
-                                # Sanitización de seguridad para la cantidad
-                                raw_cant = row.get('cantidad', row.get('Cantidad', 1))
-                                try:
-                                    cant = int(raw_cant)
-                                    if cant < 1: cant = 1
-                                except (ValueError, TypeError):
-                                    cant = 1 # Valor por defecto si ponen letras en la columna de cantidad
-                                
-                                guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
-                            
-                            st.session_state.mensaje_toast = "¡Datos importados con éxito y guardados de forma segura!"
-                            st.session_state[nombre_clave_sesion] += 1
-                            st.rerun()
-                            
+                        st.session_state.mensaje_toast = "¡Archivo adaptado e importado con éxito!"
+                        st.session_state[nombre_clave_sesion] += 1
+                        st.rerun()
+                        
                     except Exception as e:
-                        st.error("🚨 Peligro: El archivo cargado está dañado, corrupto o contiene un riesgo en su código interno. Ha sido bloqueado por el sistema de seguridad.")
+                        st.error("🚨 El archivo está tan dañado que no se pudo leer. Verifica que sea un Excel válido (.xlsx).")
 
         with col_down2:
             st.subheader("📤 Exportar Reporte")
