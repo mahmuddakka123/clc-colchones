@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import psycopg2
+from sqlalchemy import create_engine
 import datetime
 import io
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -83,15 +84,22 @@ if 'error_toast' in st.session_state:
     st.toast(st.session_state.error_toast, icon="🚨")
     del st.session_state.error_toast
 
-# --- 2. CONEXIÓN A BASE DE DATOS LOCAL (SQLite como en tu VS Code) ---
-conn = sqlite3.connect('clc_datos.db', check_same_thread=False)
+# --- 2. CONEXIÓN A BASE DE DATOS EN LA NUBE (SUPABASE) ---
+try:
+    DB_URL = st.secrets["DATABASE_URL"]
+except Exception:
+    st.error("🚨 Falta configurar DATABASE_URL en los Secrets de Streamlit.")
+    st.stop()
+
+engine = create_engine(DB_URL)
+conn = psycopg2.connect(DB_URL)
 conn.autocommit = True
 c = conn.cursor()
 
-# Crear tablas base si no existen
+# Crear tablas base en Supabase si no existen
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios (cedula TEXT PRIMARY KEY, password TEXT, rol TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS traslados (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 pestana TEXT,
                 hora TEXT,
                 codigo_lamina TEXT,
@@ -101,9 +109,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS traslados (
                 creado_por TEXT
             )''')
 
-# Asegurar usuarios por defecto
-c.execute("INSERT OR IGNORE INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss')")
-c.execute("INSERT OR IGNORE INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador')")
+# Asegurar usuarios por defecto mediante sintaxis PostgreSQL
+c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss') ON CONFLICT (cedula) DO NOTHING")
+c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador') ON CONFLICT (cedula) DO NOTHING")
 
 # --- 3. LOGIN ---
 if 'usuario' not in st.session_state:
@@ -118,7 +126,7 @@ def login():
         submit = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
         if submit:
             if cedula.strip() != "" and password.strip() != "":
-                c.execute("SELECT rol, password FROM usuarios WHERE cedula=?", (cedula.strip(),))
+                c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula.strip(),))
                 resultado = c.fetchone()
                 if resultado:
                     rol_bd, password_bd = resultado
@@ -145,26 +153,26 @@ if st.sidebar.button("🔒 Cerrar Sesión", use_container_width=True):
 st.title("📦 Panel de Control CLC - Traslado de Láminas")
 st.write("---")
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES (POSTGRESQL / SUPABASE) ---
 def cargar_datos(pestana):
-    return pd.read_sql_query(f"SELECT id, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por FROM traslados WHERE pestana='{pestana}'", conn)
+    return pd.read_sql_query(f"SELECT id, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por FROM traslados WHERE pestana='{pestana}'", engine)
 
 def cargar_todos_los_sap():
-    return pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", conn)
+    return pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", engine)
 
 def guardar_nuevo_registro(pestana, codigo, desc, cant, creador):
     hora_actual = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    c.execute("INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por) VALUES (%s, %s, %s, %s, %s, %s, %s)",
               (pestana, hora_actual, codigo, desc, cant, False, creador))
 
 def actualizar_verificacion(id_registro, estado):
-    c.execute("UPDATE traslados SET verificado=? WHERE id=?", (estado, id_registro))
+    c.execute("UPDATE traslados SET verificado=%s WHERE id=%s", (estado, id_registro))
 
 def actualizar_registro(id_registro, codigo, desc, cant):
-    c.execute("UPDATE traslados SET codigo_lamina=?, descripcion=?, cantidad=? WHERE id=?", (codigo, desc, cant, id_registro))
+    c.execute("UPDATE traslados SET codigo_lamina=%s, descripcion=%s, cantidad=%s WHERE id=%s", (codigo, desc, cant, id_registro))
 
 def eliminar_registro(id_registro):
-    c.execute("DELETE FROM traslados WHERE id=?", (id_registro,))
+    c.execute("DELETE FROM traslados WHERE id=%s", (id_registro,))
 
 def generar_excel_perfecto(df, nombre_hoja):
     output = io.BytesIO()
@@ -202,7 +210,7 @@ if st.session_state.rol in ["administrador", "boss"]:
 
 tabs = st.tabs(lista_tabs_mostrar)
 
-# Cargar el catálogo global de SAP para sincronizar el buscador dinámico
+# Cargar el catálogo global de SAP desde Supabase para el buscador dinámico
 df_sap_global = cargar_todos_los_sap()
 
 for i, nombre_pestana in enumerate(nombres_pestanas):
@@ -234,11 +242,11 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             with col_exp1:
                 with st.expander("➕ Agregar traslado" if nombre_pestana != "Códigos SAP" else "➕ Agregar Código"):
                     if nombre_pestana != "Códigos SAP":
-                        # BUSCADOR DINÁMICO SINCRONIZADO CON "CÓDIGOS SAP"
+                        # BUSCADOR DINÁMICO SINCRONIZADO CON "CÓDIGOS SAP" EN SUPABASE
                         if not df_sap_global.empty:
                             lista_opciones_sap = df_sap_global.apply(lambda r: f"{r['codigo_lamina']} - {r['descripcion']}", axis=1).tolist()
                             
-                            # CORREGIDO: Se cambió 'opciones=' por 'options=' para solucionar el crash de la app
+                            # SOLUCIONADO: Parámetro correcto 'options=' para evitar caídas en producción
                             articulo_sap_elegido = st.selectbox(
                                 "🔍 Buscar Artículo SAP (Escribe palabras clave):", 
                                 options=lista_opciones_sap,
@@ -251,11 +259,11 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                             st.text_input("Código Detectado", value=cod_detectado, disabled=True, key=f"disp_cod_{nombre_pestana}")
                             st.text_input("Descripción Detectada", value=desc_detectada, disabled=True, key=f"disp_desc_{nombre_pestana}")
                         else:
-                            st.warning("⚠️ La pestaña Códigos SAP está vacía. Registra artículos allí primero.")
+                            st.warning("⚠️ La pestaña Códigos SAP está vacía en Supabase. Registra artículos allí primero.")
                             cod_detectado = st.text_input("Código Alfanumérico (Manual)", key=f"manual_cod_{nombre_pestana}")
                             desc_detectada = st.text_input("Descripción (Manual)", key=f"manual_desc_{nombre_pestana}")
                         
-                        # Formulario simplificado donde solo pones la cantidad
+                        # Formulario responsivo donde el operario solo digita la cantidad
                         with st.form(key=f"form_add_{nombre_pestana}", clear_on_submit=True):
                             nueva_cant = st.number_input("Cantidad", min_value=1, value=1, key=f"num_cant_{nombre_pestana}")
                             submit_add = st.form_submit_button("Agregar a la tabla", use_container_width=True, type="primary")
@@ -338,6 +346,7 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             columnas_config["hora"] = None; columnas_config["verificado"] = None
             columnas_config["creado_por"] = None; columnas_config["cantidad"] = None
         
+        # Editor responsivo táctil para celulares
         edited_df = st.data_editor(
             df,
             column_config=columnas_config,
@@ -403,11 +412,11 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                 key=f"down_{nombre_pestana}", type="primary", use_container_width=True
             )
 
-# --- 6. PANEL DE CONTROL DE USUARIOS ---
+# --- 6. PANEL DE CONTROL DE USUARIOS EN SUPABASE ---
 if st.session_state.rol in ["administrador", "boss"]:
     with tabs[4]: 
         st.header("⚙️ Configuración Global de Usuarios")
-        df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", conn)
+        df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
         st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
         st.write("---")
         col_adm1, col_adm2 = st.columns(2)
@@ -420,7 +429,7 @@ if st.session_state.rol in ["administrador", "boss"]:
                 n_rol = st.selectbox("Asignar Rol", ["administrador", "moderador", "visualizador", "boss"])
                 if st.form_submit_button("Guardar Usuario", use_container_width=True):
                     if n_cedula.strip() != "" and n_password.strip() != "":
-                        c.execute("""INSERT INTO usuarios (cedula, password, rol) VALUES (?, ?, ?) 
+                        c.execute("""INSERT INTO usuarios (cedula, password, rol) VALUES (%s, %s, %s) 
                                      ON CONFLICT (cedula) DO UPDATE SET password = EXCLUDED.password, rol = EXCLUDED.rol""", 
                                   (n_cedula.strip(), n_password.strip(), n_rol))
                         st.session_state.mensaje_toast = f"Usuario {n_cedula} guardado."
@@ -431,9 +440,8 @@ if st.session_state.rol in ["administrador", "boss"]:
                 st.subheader("🗑️ Eliminar Usuario")
                 usuario_a_eliminar = st.selectbox("Selecciona el usuario a eliminar", df_usuarios['cedula'].tolist())
                 if st.form_submit_button("Eliminar permanentemente", type="primary", use_container_width=True):
-                    c.execute("DELETE FROM usuarios WHERE cedula=?", (usuario_a_eliminar,))
+                    c.execute("DELETE FROM usuarios WHERE cedula=%s", (usuario_a_eliminar,))
                     st.session_state.mensaje_toast = f"Usuario {usuario_a_eliminar} eliminado."
                     st.rerun()
 
 conn.close()
-
