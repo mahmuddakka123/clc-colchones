@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
-from sqlalchemy import create_engine
+import sqlite3
 import datetime
 import io
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -11,36 +10,72 @@ st.set_page_config(
     page_title="CLC Colchones - Gestión", 
     page_icon="🛏️", 
     layout="wide",
-    initial_sidebar_state="collapsed" # Ayuda en celulares ocultando la barra por defecto
+    initial_sidebar_state="collapsed"
 )
 
-# --- CSS INYECTADO PARA ADAPTACIÓN A CELULARES ---
+# --- CSS AVANZADO: DISEÑO DIFERENCIADO PARA COMPUTADORA Y CELULAR ---
 st.markdown("""
     <style>
-    /* Hace que las pestañas (Tabs) se ajusten en pantallas pequeñas y no se corten */
-    div[data-testid="stTabs"] button {
-        font-size: 14px !important;
-        padding: 8px 12px !important;
-    }
-    
-    /* Optimiza el padding de la app en pantallas de celulares */
+    /* --- 💻 ESTILOS POR DEFECTO (COMPUTADORA) --- */
     .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    h1 {
+        font-size: 2.5rem !important;
     }
     
-    /* Forzar que los elementos en columnas colapsen a una sola fila en pantallas móviles de menos de 768px */
+    /* --- 📱 ESTILOS EXCLUSIVOS PARA PANTALLAS PEQUEÑAS (CELULARES) --- */
     @media (max-width: 768px) {
+        /* Reduce los márgenes generales para aprovechar la pantalla del móvil */
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 0.4rem !important;
+            padding-right: 0.4rem !important;
+        }
+        
+        /* Ajusta los títulos para que no se corten en celulares */
+        h1 {
+            font-size: 1.6rem !important;
+            text-align: center !important;
+        }
+        h2, h3, h4 {
+            font-size: 1.2rem !important;
+        }
+        
+        /* Optimiza las pestañas de navegación para que quepan en una sola fila móvil */
+        div[data-testid="stTabs"] button {
+            font-size: 11px !important;
+            padding: 6px 8px !important;
+            gap: 2px !important;
+        }
+        
+        /* Hace que las tarjetas de métricas sean más compactas */
+        div[data-testid="stMetricValue"] {
+            font-size: 1.4rem !important;
+        }
+        
+        /* Engorda los botones en el celular para que sea fácil tocarlos con el dedo */
+        button[data-testid="stBaseButton-secondary"], button[data-testid="stBaseButton-primary"] {
+            padding: 12px 10px !important;
+            font-size: 15px !important;
+            min-height: 45px !important;
+        }
+        
+        /* Fuerza a que las columnas de los formularios se apilen verticalmente en el celular */
         div[data-testid="column"] {
             width: 100% !important;
             flex: 1 1 auto !important;
+            padding: 0.2rem 0rem !important;
         }
     }
     </style>
 """, unsafe_allow_html=True)
 
+# Manejo de notificaciones en pantalla (Toasts)
 if 'mensaje_toast' in st.session_state:
     st.toast(st.session_state.mensaje_toast, icon="✅")
     del st.session_state.mensaje_toast
@@ -48,22 +83,15 @@ if 'error_toast' in st.session_state:
     st.toast(st.session_state.error_toast, icon="🚨")
     del st.session_state.error_toast
 
-# --- 2. CONEXIÓN A BASE DE DATOS EN LA NUBE ---
-try:
-    DB_URL = st.secrets["DATABASE_URL"]
-except Exception:
-    st.error("🚨 Falta configurar DATABASE_URL en los Secrets de Streamlit.")
-    st.stop()
-
-engine = create_engine(DB_URL)
-conn = psycopg2.connect(DB_URL)
+# --- 2. CONEXIÓN A BASE DE DATOS LOCAL (SQLite como en tu VS Code) ---
+conn = sqlite3.connect('clc_datos.db', check_same_thread=False)
 conn.autocommit = True
 c = conn.cursor()
 
-# Crear tablas base
+# Crear tablas base si no existen
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios (cedula TEXT PRIMARY KEY, password TEXT, rol TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS traslados (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 pestana TEXT,
                 hora TEXT,
                 codigo_lamina TEXT,
@@ -73,20 +101,9 @@ c.execute('''CREATE TABLE IF NOT EXISTS traslados (
                 creado_por TEXT
             )''')
 
-# --- MIGRACIONES ---
-c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='usuarios'")
-columnas_usuarios = [col[0] for col in c.fetchall()]
-if 'password' not in columnas_usuarios:
-    c.execute("ALTER TABLE usuarios ADD COLUMN password TEXT DEFAULT '123456'")
-    c.execute("UPDATE usuarios SET password = cedula") 
-
-c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='traslados'")
-columnas_traslados = [col[0] for col in c.fetchall()]
-if 'creado_por' not in columnas_traslados:
-    c.execute("ALTER TABLE traslados ADD COLUMN creado_por TEXT DEFAULT 'admin_legacy'")
-
-c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss') ON CONFLICT (cedula) DO NOTHING")
-c.execute("INSERT INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador') ON CONFLICT (cedula) DO NOTHING")
+# Asegurar usuarios por defecto
+c.execute("INSERT OR IGNORE INTO usuarios (cedula, password, rol) VALUES ('37322733', '12345678', 'boss')")
+c.execute("INSERT OR IGNORE INTO usuarios (cedula, password, rol) VALUES ('admin', 'admin', 'administrador')")
 
 # --- 3. LOGIN ---
 if 'usuario' not in st.session_state:
@@ -101,7 +118,7 @@ def login():
         submit = st.form_submit_button("Ingresar", type="primary", use_container_width=True)
         if submit:
             if cedula.strip() != "" and password.strip() != "":
-                c.execute("SELECT rol, password FROM usuarios WHERE cedula=%s", (cedula.strip(),))
+                c.execute("SELECT rol, password FROM usuarios WHERE cedula=?", (cedula.strip(),))
                 resultado = c.fetchone()
                 if resultado:
                     rol_bd, password_bd = resultado
@@ -120,8 +137,6 @@ if st.session_state.usuario is None:
 # --- 4. BARRA LATERAL (SIDEBAR) ---
 st.sidebar.title(f"👤 Usuario:\n{st.session_state.usuario}")
 st.sidebar.subheader(f"🛡️ Rol: {st.session_state.rol.capitalize()}")
-if st.session_state.rol == "boss":
-    st.sidebar.success("👑 Acceso Nivel Máximo")
 if st.sidebar.button("🔒 Cerrar Sesión", use_container_width=True):
     st.session_state.usuario = None
     st.session_state.rol = None
@@ -132,24 +147,24 @@ st.write("---")
 
 # --- FUNCIONES AUXILIARES ---
 def cargar_datos(pestana):
-    return pd.read_sql_query(f"SELECT id, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por FROM traslados WHERE pestana='{pestana}'", engine)
+    return pd.read_sql_query(f"SELECT id, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por FROM traslados WHERE pestana='{pestana}'", conn)
 
 def cargar_todos_los_sap():
-    return pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", engine)
+    return pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", conn)
 
 def guardar_nuevo_registro(pestana, codigo, desc, cant, creador):
     hora_actual = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+    c.execute("INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?)",
               (pestana, hora_actual, codigo, desc, cant, False, creador))
 
 def actualizar_verificacion(id_registro, estado):
-    c.execute("UPDATE traslados SET verificado=%s WHERE id=%s", (estado, id_registro))
+    c.execute("UPDATE traslados SET verificado=? WHERE id=?", (estado, id_registro))
 
 def actualizar_registro(id_registro, codigo, desc, cant):
-    c.execute("UPDATE traslados SET codigo_lamina=%s, descripcion=%s, cantidad=%s WHERE id=%s", (codigo, desc, cant, id_registro))
+    c.execute("UPDATE traslados SET codigo_lamina=?, descripcion=?, cantidad=? WHERE id=?", (codigo, desc, cant, id_registro))
 
 def eliminar_registro(id_registro):
-    c.execute("DELETE FROM traslados WHERE id=%s", (id_registro,))
+    c.execute("DELETE FROM traslados WHERE id=?", (id_registro,))
 
 def generar_excel_perfecto(df, nombre_hoja):
     output = io.BytesIO()
@@ -206,7 +221,6 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
         if nombre_pestana == "Códigos SAP":
             st.metric("📄 Total de Códigos Registrados", total_registros)
         else:
-            # En celulares st.columns colapsa verticalmente gracias al CSS agregado
             col_m1, col_m2, col_m3 = st.columns(3)
             col_m1.metric("📄 Total de Registros", total_registros)
             col_m2.metric("📦 Unidades Totales", total_laminas)
@@ -220,30 +234,28 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             with col_exp1:
                 with st.expander("➕ Agregar traslado" if nombre_pestana != "Códigos SAP" else "➕ Agregar Código"):
                     if nombre_pestana != "Códigos SAP":
-                        # BUSCADOR INTELIGENTE SINCRONIZADO CON LA PESTAÑA CÓDIGOS SAP
+                        # BUSCADOR DINÁMICO SINCRONIZADO CON "CÓDIGOS SAP"
                         if not df_sap_global.empty:
                             lista_opciones_sap = df_sap_global.apply(lambda r: f"{r['codigo_lamina']} - {r['descripcion']}", axis=1).tolist()
                             
-                            # st.selectbox actúa como buscador predictivo tipo "Escribe láminas y filtra automáticamente"
+                            # CORREGIDO: Se cambió 'opciones=' por 'options=' para solucionar el crash de la app
                             articulo_sap_elegido = st.selectbox(
                                 "🔍 Buscar Artículo SAP (Escribe palabras clave):", 
-                                opciones=lista_opciones_sap,
+                                options=lista_opciones_sap,
                                 key=f"sap_search_{nombre_pestana}"
                             )
                             
-                            # Separamos el código y la descripción seleccionada de forma automática
                             cod_detectado = articulo_sap_elegido.split(" - ")[0].strip()
                             desc_detectada = articulo_sap_elegido.split(" - ")[1].strip()
                             
-                            # Mostramos información visual en gris deshabilitado para confirmar
                             st.text_input("Código Detectado", value=cod_detectado, disabled=True, key=f"disp_cod_{nombre_pestana}")
                             st.text_input("Descripción Detectada", value=desc_detectada, disabled=True, key=f"disp_desc_{nombre_pestana}")
                         else:
-                            st.warning("⚠️ La pestaña Códigos SAP está vacía. Registra artículos allí para usar el buscador.")
+                            st.warning("⚠️ La pestaña Códigos SAP está vacía. Registra artículos allí primero.")
                             cod_detectado = st.text_input("Código Alfanumérico (Manual)", key=f"manual_cod_{nombre_pestana}")
                             desc_detectada = st.text_input("Descripción (Manual)", key=f"manual_desc_{nombre_pestana}")
                         
-                        # Formulario simplificado donde el operario solo digita la cantidad
+                        # Formulario simplificado donde solo pones la cantidad
                         with st.form(key=f"form_add_{nombre_pestana}", clear_on_submit=True):
                             nueva_cant = st.number_input("Cantidad", min_value=1, value=1, key=f"num_cant_{nombre_pestana}")
                             submit_add = st.form_submit_button("Agregar a la tabla", use_container_width=True, type="primary")
@@ -251,12 +263,9 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                             if submit_add:
                                 if cod_detectado != "":
                                     guardar_nuevo_registro(nombre_pestana, cod_detectado, desc_detectada, nueva_cant, st.session_state.usuario)
-                                    st.session_state.mensaje_toast = "¡Registro añadido usando Catálogo SAP!"
+                                    st.session_state.mensaje_toast = "¡Registro añadido exitosamente!"
                                     st.rerun()
-                                else:
-                                    st.error("Error en selección de artículo.")
                     else:
-                        # Si es la propia pestaña de Códigos SAP, el formulario sigue normal para ingresar nuevos códigos maestros
                         with st.form(key=f"form_add_sap_maestro", clear_on_submit=True):
                             nuevo_codigo = st.text_input("Código Alfanumérico")
                             nueva_desc = st.text_input("Descripción")
@@ -329,7 +338,6 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
             columnas_config["hora"] = None; columnas_config["verificado"] = None
             columnas_config["creado_por"] = None; columnas_config["cantidad"] = None
         
-        # El data_editor de Streamlit incluye scroll horizontal responsivo nativo en celulares
         edited_df = st.data_editor(
             df,
             column_config=columnas_config,
@@ -364,46 +372,29 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                             if 'codigo_lamina' in df_importado.columns: cod = row['codigo_lamina']
                             elif 'código' in df_importado.columns: cod = row['código']
                             elif 'codigo' in df_importado.columns: cod = row['codigo']
-                            elif len(df_importado.columns) > 0: cod = row.iloc[0]
                             
                             desc = "N/A"
                             if 'descripcion' in df_importado.columns: desc = row['descripcion']
                             elif 'descripción' in df_importado.columns: desc = row['descripción']
-                            elif len(df_importado.columns) > 1: desc = row.iloc[1]
                             
                             raw_cant = 1
                             if 'cantidad' in df_importado.columns: raw_cant = row['cantidad']
-                            elif 'cant' in df_importado.columns: raw_cant = row['cant']
-                            elif len(df_importado.columns) > 2: raw_cant = row.iloc[2]
                             
                             cod = str(cod).strip() if pd.notna(cod) else "N/A"
                             desc = str(desc).strip() if pd.notna(desc) else "N/A"
-                            try:
-                                cant = int(float(raw_cant))
-                                if cant < 1: cant = 1
+                            try: cant = int(float(raw_cant))
                             except: cant = 1
                             
-                            es_duplicado = False
-                            if not df.empty:
-                                if nombre_pestana == "Códigos SAP":
-                                    coincidencia = df[(df['codigo_lamina'].astype(str) == cod) & (df['descripcion'].astype(str) == desc)]
-                                else:
-                                    coincidencia = df[(df['codigo_lamina'].astype(str) == cod) & (df['descripcion'].astype(str) == desc) & (df['cantidad'].astype(int) == cant)]
-                                if not coincidencia.empty: es_duplicado = True
-                            
-                            if not es_duplicado:
-                                guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
-                                registros_nuevos += 1
-                        if registros_nuevos > 0: st.session_state.mensaje_toast = f"¡Se importaron {registros_nuevos} registros!"
-                        else: st.session_state.mensaje_toast = "El archivo contenía solo duplicados."
+                            guardar_nuevo_registro(nombre_pestana, cod, desc, cant, st.session_state.usuario)
+                            registros_nuevos += 1
+                        st.session_state.mensaje_toast = f"¡Se importaron {registros_nuevos} registros!"
                         st.session_state[nombre_clave_sesion] += 1
                         st.rerun()
-                    except: st.error("🚨 Formato de archivo ilegible.")
+                    except: st.error("🚨 Archivo no legible.")
 
         with col_down2:
             st.subheader("📤 Exportar Reporte")
-            df_para_exportar = df.drop(columns=['id'])
-            if nombre_pestana == "Códigos SAP": df_para_exportar = df_para_exportar[['codigo_lamina', 'descripcion']]
+            df_para_exportar = df.drop(columns=['id']) if not df.empty else df
             excel_data = generar_excel_perfecto(df_para_exportar, nombre_pestana)
             st.download_button(
                 label="📊 Descargar Excel", data=excel_data, 
@@ -416,11 +407,7 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
 if st.session_state.rol in ["administrador", "boss"]:
     with tabs[4]: 
         st.header("⚙️ Configuración Global de Usuarios")
-        if st.session_state.rol == "boss":
-            df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
-        else:
-            df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios WHERE rol != 'boss'", engine)
-        
+        df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", conn)
         st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
         st.write("---")
         col_adm1, col_adm2 = st.columns(2)
@@ -430,34 +417,22 @@ if st.session_state.rol in ["administrador", "boss"]:
                 st.subheader("➕ Crear / Modificar Usuario")
                 n_cedula = st.text_input("Usuario")
                 n_password = st.text_input("Nueva Contraseña")
-                opciones_rol = ["administrador", "moderador", "visualizador"]
-                if st.session_state.rol == "boss": opciones_rol.append("boss")
-                n_rol = st.selectbox("Asignar Rol", opciones_rol)
+                n_rol = st.selectbox("Asignar Rol", ["administrador", "moderador", "visualizador", "boss"])
                 if st.form_submit_button("Guardar Usuario", use_container_width=True):
                     if n_cedula.strip() != "" and n_password.strip() != "":
-                        c.execute("SELECT rol FROM usuarios WHERE cedula=%s", (n_cedula.strip(),))
-                        rol_existente = c.fetchone()
-                        if rol_existente and rol_existente[0] == "boss" and st.session_state.rol != "boss":
-                            st.session_state.error_toast = "❌ No tienes permisos para modificar cuentas Boss."
-                            st.rerun()
-                        else:
-                            c.execute("""INSERT INTO usuarios (cedula, password, rol) VALUES (%s, %s, %s) 
-                                         ON CONFLICT (cedula) DO UPDATE SET password = EXCLUDED.password, rol = EXCLUDED.rol""", 
-                                      (n_cedula.strip(), n_password.strip(), n_rol))
-                            st.session_state.mensaje_toast = f"Usuario {n_cedula} configurado."
-                            st.rerun()
-                    else: st.error("Debes llenar todos los campos.")
+                        c.execute("""INSERT INTO usuarios (cedula, password, rol) VALUES (?, ?, ?) 
+                                     ON CONFLICT (cedula) DO UPDATE SET password = EXCLUDED.password, rol = EXCLUDED.rol""", 
+                                  (n_cedula.strip(), n_password.strip(), n_rol))
+                        st.session_state.mensaje_toast = f"Usuario {n_cedula} guardado."
+                        st.rerun()
         
         with col_adm2:
             with st.form("eliminar_usuario"):
                 st.subheader("🗑️ Eliminar Usuario")
-                lista_usuarios = df_usuarios['cedula'].tolist()
-                usuario_a_eliminar = st.selectbox("Selecciona el usuario a eliminar", lista_usuarios)
+                usuario_a_eliminar = st.selectbox("Selecciona el usuario a eliminar", df_usuarios['cedula'].tolist())
                 if st.form_submit_button("Eliminar permanentemente", type="primary", use_container_width=True):
-                    c.execute("DELETE FROM usuarios WHERE cedula=%s", (usuario_a_eliminar,))
+                    c.execute("DELETE FROM usuarios WHERE cedula=?", (usuario_a_eliminar,))
                     st.session_state.mensaje_toast = f"Usuario {usuario_a_eliminar} eliminado."
-                    if usuario_a_eliminar == st.session_state.usuario:
-                        st.session_state.usuario = None; st.session_state.rol = None
                     st.rerun()
 
 conn.close()
