@@ -135,7 +135,6 @@ st.write("---")
 
 # --- FUNCIONES AUXILIARES ---
 def cargar_datos(pestana):
-    # Agrupa de forma automática las sub-líneas debajo de su pedido correspondiente por ID
     query = f"""SELECT id, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, 
                 despacho, pendientes, parent_id 
                 FROM traslados WHERE pestana='{pestana}'
@@ -161,7 +160,6 @@ def actualizar_verificacion(id_registro, estado):
     c.execute("UPDATE traslados SET verificado=%s WHERE id=%s", (estado, id_registro))
 
 def actualizar_registro(id_registro, codigo, desc, cant):
-    # Al cambiar la cantidad del pedido, recalculamos su pendiente restando los despachos hechos en sus sub-líneas
     c.execute("SELECT COALESCE(SUM(despacho), 0) FROM traslados WHERE parent_id=%s", (id_registro,))
     total_despachado = int(c.fetchone()[0])
     nuevos_pendientes = max(0, cant - total_despachado)
@@ -169,7 +167,6 @@ def actualizar_registro(id_registro, codigo, desc, cant):
               (codigo, desc, cant, nuevos_pendientes, id_registro))
 
 def eliminar_registro(id_registro):
-    # Elimina el pedido principal y todas sus sub-líneas de despacho asociadas automáticamente
     c.execute("DELETE FROM traslados WHERE id=%s OR parent_id=%s", (id_registro, id_registro))
 
 def generar_excel_perfecto(df, nombre_hoja):
@@ -303,15 +300,20 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
         df_display = df.copy()
         if not df_display.empty:
             df_display['verificado'] = df_display['verificado'].astype(bool)
-            df_display['hora'] = pd.to_datetime(df_display['hora']).dt.strftime('%d/%m/%Y %H:%M')
+            if 'hora' in df_display.columns:
+                df_display['hora'] = pd.to_datetime(df_display['hora']).dt.strftime('%d/%m/%Y %H:%M')
             
-            # --- MÁSCARA VISUAL PARA SUB-LÍNEAS DE DESPACHO ---
-            # Si la fila tiene un 'parent_id', significa que es un despacho. Ponemos '=' en código, descripción y cantidad.
-            sub_rows_mask = df_display['parent_id'].notna()
-            df_display.loc[sub_rows_mask, 'codigo_lamina'] = "="
-            df_display.loc[sub_rows_mask, 'descripcion'] = "="
-            df_display.loc[sub_rows_mask, 'cantidad'] = "="
-            df_display.loc[~sub_rows_mask, 'cantidad'] = df_display.loc[~sub_rows_mask, 'cantidad'].astype(str)
+            # --- CORRECCIÓN DEL ERROR TYPEERROR AQUÍ ---
+            # Convertimos TODAS las columnas afectadas a tipo string ANTES de insertar el símbolo "="
+            df_display['codigo_lamina'] = df_display['codigo_lamina'].astype(str)
+            df_display['descripcion'] = df_display['descripcion'].astype(str)
+            df_display['cantidad'] = df_display['cantidad'].astype(str)
+            
+            if 'parent_id' in df_display.columns:
+                sub_rows_mask = df_display['parent_id'].notna()
+                df_display.loc[sub_rows_mask, 'codigo_lamina'] = "="
+                df_display.loc[sub_rows_mask, 'descripcion'] = "="
+                df_display.loc[sub_rows_mask, 'cantidad'] = "="
 
         permitir_verificacion = st.session_state.rol in ["administrador", "boss"]
         permitir_despacho = (st.session_state.rol == "moderador")
@@ -363,7 +365,7 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
                         nuevos_pendientes = max(0, pendiente_actual - nuevo_despacho)
                         hora_movimiento = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # Insertar la nueva línea por debajo con los datos del Moderador y con '=' en los campos base
+                        # Insertar la nueva línea por debajo con los datos del Moderador y con '='
                         c.execute("""INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes, parent_id)
                                      VALUES (%s, %s, %s, %s, 0, %s, %s, %s, %s, %s)""",
                                   (nombre_pestana, hora_movimiento, '=', '=', False, st.session_state.usuario, nuevo_despacho, nuevos_pendientes, id_real))
@@ -398,7 +400,8 @@ for i, nombre_pestana in enumerate(nombres_pestanas):
 
         with col_down2:
             st.subheader("📤 Exportar Reporte")
-            df_para_exportar = df_display.drop(columns=['id', 'parent_id']) if not df_display.empty else df_display
+            # Se añade errors='ignore' para evitar fallos si las columnas no existen
+            df_para_exportar = df_display.drop(columns=['id', 'parent_id'], errors='ignore') if not df_display.empty else df_display
             excel_data = generar_excel_perfecto(df_para_exportar, nombre_pestana)
             st.download_button("📊 Descargar Excel", data=excel_data, 
                 file_name=f"CLC_{nombre_pestana}_{datetime.date.today()}.xlsx", 
