@@ -4,6 +4,7 @@ import psycopg2
 from sqlalchemy import create_engine
 import datetime
 import io
+import unicodedata
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 # 1. Configuración de la interfaz
@@ -340,11 +341,8 @@ else:
 
     st.write("#### 📊 Hoja de Trabajo Activa")
     
-    # === CORRECCIÓN DEL ERROR AQUÍ ===
-    # Variables globales de permisos reubicadas para que siempre existan
     es_readonly_general = (st.session_state.rol == "moderador")
     permiso_verificar = st.session_state.rol in ["administrador", "boss"]
-    # =================================
     
     # RENDERIZADO DE LA TABLA
     if nombre_tab == "Códigos SAP":
@@ -418,17 +416,56 @@ else:
                     if archivo_carga:
                         try:
                             df_excel = pd.read_excel(archivo_carga)
-                            df_excel.columns = [str(c).lower().strip() for c in df_excel.columns]
+                            
+                            # 1. Normalizar nombres de columnas (quitar tildes, espacios y poner en minúsculas)
+                            def normalizar_col(col):
+                                c = str(col).lower().strip()
+                                return ''.join(char for char in unicodedata.normalize('NFD', c) if unicodedata.category(char) != 'Mn')
+                            
+                            df_excel.columns = [normalizar_col(c) for c in df_excel.columns]
+                            
+                            # 2. Función de búsqueda flexible de columnas
+                            def buscar_columna(df, palabras_clave):
+                                for col in df.columns:
+                                    if any(p in col for p in palabras_clave):
+                                        return col
+                                return None
+                            
+                            # Diccionario de posibles nombres que la gente le pone al Excel
+                            col_cod = buscar_columna(df_excel, ['cod', 'sap', 'lamina', 'mat', 'art'])
+                            col_desc = buscar_columna(df_excel, ['desc', 'nom', 'detal', 'text'])
+                            col_cant = buscar_columna(df_excel, ['cant', 'q', 'und', 'uni', 'tot'])
+                            
+                            filas_procesadas = 0
                             for _, row_ex in df_excel.iterrows():
-                                c_excel = str(row_ex.get('codigo_lamina', row_ex.get('código', row_ex.get('codigo', 'N/A')))).strip()
-                                d_excel = str(row_ex.get('descripcion', row_ex.get('descripción', 'N/A'))).strip()
-                                try: q_excel = int(float(row_ex.get('cantidad', 1)))
-                                except: q_excel = 1
+                                # Extracción segura con fallback a vacío
+                                c_excel = str(row_ex[col_cod]).strip() if col_cod and pd.notna(row_ex[col_cod]) else ""
+                                d_excel = str(row_ex[col_desc]).strip() if col_desc and pd.notna(row_ex[col_desc]) else ""
+                                
+                                # Si toda la fila está vacía o dice nan, la ignoramos
+                                if (not c_excel or c_excel.lower() == 'nan') and (not d_excel or d_excel.lower() == 'nan'):
+                                    continue
+                                
+                                # Si vino incompleto le ponemos una etiqueta genérica
+                                if not c_excel or c_excel.lower() == 'nan': c_excel = "S/C"
+                                if not d_excel or d_excel.lower() == 'nan': d_excel = "Sin Descripción"
+                                
+                                try: 
+                                    q_excel = int(float(row_ex[col_cant])) if col_cant and pd.notna(row_ex[col_cant]) else 1
+                                except: 
+                                    q_excel = 1
+                                    
                                 agregar_nuevo_registro(nombre_tab, c_excel, d_excel, q_excel, st.session_state.usuario)
-                            st.session_state.mensaje_toast = "Base cargada."
+                                filas_procesadas += 1
+                                
+                            if filas_procesadas > 0:
+                                st.session_state.mensaje_toast = f"¡{filas_procesadas} registros adaptados y cargados!"
+                            else:
+                                st.session_state.error_toast = "El Excel estaba vacío o sin formato reconocible."
                             st.rerun()
-                        except:
-                            st.error("Error leyendo Excel.")
+                            
+                        except Exception as e:
+                            st.error(f"Error procesando el Excel: {e}")
 
     with b_export:
         df_salida = df_tabla.drop(columns=['id', 'parent_id'], errors='ignore') if not df_tabla.empty else df_tabla
