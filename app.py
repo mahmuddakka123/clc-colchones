@@ -166,7 +166,7 @@ def exportar_excel(df, nombre_hoja):
         sheet.freeze_panes = "A2"
     return output.getvalue()
 
-# 6. Renderizado de Pestañas
+# 6. Renderizado de Pestañas y Panel de Administración
 lista_pestanas_base = ["Minelba", "Kelvin", "Miguel", "Códigos SAP"]
 pestanas_visibles = lista_pestanas_base.copy()
 if st.session_state.rol in ["administrador", "boss"]:
@@ -175,8 +175,51 @@ if st.session_state.rol in ["administrador", "boss"]:
 tabs = st.tabs(pestanas_visibles)
 df_sap_global = pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", engine)
 
-for idx, nombre_tab in enumerate(lista_pestanas_base):
+for idx, nombre_tab in enumerate(pestanas_visibles):
     with tabs[idx]:
+        
+        # ---------------------------------------------------------
+        # PANEL DE ADMINISTRADOR (ROLES)
+        # ---------------------------------------------------------
+        if nombre_tab == "Panel de Administrador":
+            st.header("⚙️ Administración de Usuarios")
+            df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
+            st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+            
+            a_c1, a_c2 = st.columns(2)
+            with a_c1:
+                st.subheader("Crear / Editar Usuario")
+                with st.form(key="form_adm_user", clear_on_submit=True):
+                    c_user = st.text_input("Usuario / Cédula").strip()
+                    p_user = st.text_input("Contraseña").strip()
+                    r_user = st.selectbox("Rol", ["administrador", "moderador", "boss"])
+                    if st.form_submit_button("Guardar Usuario", use_container_width=True):
+                        if c_user and p_user:
+                            with conectar_bd() as conexion:
+                                with conexion.cursor() as cursor:
+                                    cursor.execute("""
+                                        INSERT INTO usuarios (cedula, password, rol) VALUES (%s, %s, %s) 
+                                        ON CONFLICT (cedula) DO UPDATE SET password = EXCLUDED.password, rol = EXCLUDED.rol
+                                    """, (c_user, p_user, r_user))
+                            st.session_state.mensaje_toast = "Usuario guardado."
+                            st.rerun()
+            
+            with a_c2:
+                if not df_usuarios.empty:
+                    st.subheader("Eliminar Usuario")
+                    with st.form(key="form_adm_del"):
+                        user_del = st.selectbox("Seleccionar usuario:", df_usuarios['cedula'].tolist())
+                        if st.form_submit_button("Eliminar Usuario", type="primary", use_container_width=True):
+                            with conectar_bd() as conexion:
+                                with conexion.cursor() as cursor:
+                                    cursor.execute("DELETE FROM usuarios WHERE cedula=%s", (user_del,))
+                            st.session_state.mensaje_toast = "Usuario eliminado."
+                            st.rerun()
+            continue # Salta el resto del código para esta pestaña
+
+        # ---------------------------------------------------------
+        # LÓGICA DE GESTIÓN DE LÁMINAS
+        # ---------------------------------------------------------
         df_datos = obtener_registros(nombre_tab)
         df_pedidos_base = df_datos[df_datos['parent_id'].isna()] if not df_datos.empty else df_datos
         
@@ -190,41 +233,40 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             
         st.write("---")
         
-        # ---------------------------------------------------------
         # CONTROLES EXCLUSIVOS ADMINISTRADORES / BOSS
-        # ---------------------------------------------------------
         if st.session_state.rol in ["administrador", "boss"]:
             c_add, c_edit, c_del = st.columns(3)
             
             with c_add:
                 with st.expander("➕ Añadir Petición (Base)"):
                     if nombre_tab != "Códigos SAP":
-                        if not df_sap_global.empty:
-                            opciones_select_sap = df_sap_global.apply(lambda r: f"{r['codigo_lamina']} - {r['descripcion']}", axis=1).tolist()
-                            seleccion_sap = st.selectbox("Seleccionar Artículo SAP:", options=opciones_select_sap, key=f"sap_menu_{nombre_tab}")
-                            cod_def = seleccion_sap.split(" - ")[0].strip()
-                            desc_def = seleccion_sap.split(" - ")[1].strip()
-                        else:
-                            st.warning("Catálogo vacío.")
-                            cod_def = st.text_input("Código", key=f"input_cod_{nombre_tab}").strip()
-                            desc_def = st.text_input("Descripción", key=f"input_desc_{nombre_tab}").strip()
-                        
-                        # Ya no hay st.form, el enter funciona perfectamente aquí.
-                        cant_alta = st.number_input("Cantidad Solicitada", min_value=1, value=1, key=f"cant_alta_{nombre_tab}")
-                        
-                        if st.button("Registrar Petición", use_container_width=True, type="primary", key=f"btn_add_pet_{nombre_tab}"):
-                            if cod_def:
-                                agregar_nuevo_registro(nombre_tab, cod_def, desc_def, cant_alta, st.session_state.usuario)
-                                st.session_state.mensaje_toast = "Petición registrada."
-                                st.rerun()
+                        with st.form(key=f"form_add_{nombre_tab}", clear_on_submit=True):
+                            if not df_sap_global.empty:
+                                opciones_select_sap = df_sap_global.apply(lambda r: f"{r['codigo_lamina']} - {r['descripcion']}", axis=1).tolist()
+                                seleccion_sap = st.selectbox("Seleccionar Artículo SAP:", options=opciones_select_sap)
+                                cod_def = seleccion_sap.split(" - ")[0].strip()
+                                desc_def = seleccion_sap.split(" - ")[1].strip()
+                            else:
+                                st.warning("Catálogo vacío.")
+                                cod_def = st.text_input("Código").strip()
+                                desc_def = st.text_input("Descripción").strip()
+                            
+                            cant_alta = st.number_input("Cantidad Solicitada", min_value=1, value=1)
+                            
+                            if st.form_submit_button("Registrar Petición", use_container_width=True, type="primary"):
+                                if cod_def:
+                                    agregar_nuevo_registro(nombre_tab, cod_def, desc_def, cant_alta, st.session_state.usuario)
+                                    st.session_state.mensaje_toast = "Petición registrada."
+                                    st.rerun()
                     else:
-                        cod_sap_new = st.text_input("Código SAP", key=f"sap_cod_new_{nombre_tab}").strip()
-                        desc_sap_new = st.text_input("Descripción", key=f"sap_desc_new_{nombre_tab}").strip()
-                        if st.button("Añadir a Catálogo", key=f"btn_add_sap_{nombre_tab}"):
-                            if cod_sap_new:
-                                agregar_nuevo_registro("Códigos SAP", cod_sap_new, desc_sap_new, 1, st.session_state.usuario)
-                                st.session_state.mensaje_toast = "Código SAP añadido."
-                                st.rerun()
+                        with st.form(key=f"form_add_sap_{nombre_tab}", clear_on_submit=True):
+                            cod_sap_new = st.text_input("Código SAP").strip()
+                            desc_sap_new = st.text_input("Descripción").strip()
+                            if st.form_submit_button("Añadir a Catálogo"):
+                                if cod_sap_new:
+                                    agregar_nuevo_registro("Códigos SAP", cod_sap_new, desc_sap_new, 1, st.session_state.usuario)
+                                    st.session_state.mensaje_toast = "Código SAP añadido."
+                                    st.rerun()
             
             with c_edit:
                 with st.expander("📝 Modificar Petición"):
@@ -234,32 +276,32 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                         id_edit = int(seleccion_mod.split(" | ")[0].replace("ID: ", ""))
                         fila_original = df_pedidos_base[df_pedidos_base['id'] == id_edit].iloc[0]
                         
-                        c_actualizado = st.text_input("Código", value=str(fila_original['codigo_lamina']), key=f"edit_cod_{nombre_tab}")
-                        d_actualizada = st.text_input("Descripción", value=str(fila_original['descripcion']), key=f"edit_desc_{nombre_tab}")
-                        q_actualizada = st.number_input("Cantidad", min_value=1, value=int(fila_original['cantidad']), key=f"edit_cant_{nombre_tab}") if nombre_tab != "Códigos SAP" else 1
-                        
-                        if st.button("Guardar Cambios", use_container_width=True, key=f"btn_save_edit_{nombre_tab}"):
-                            modificar_registro_existente(id_edit, c_actualizado, d_actualizada, q_actualizada)
-                            st.session_state.mensaje_toast = "Modificado correctamente."
-                            st.rerun()
+                        with st.form(key=f"form_edit_{nombre_tab}"):
+                            c_actualizado = st.text_input("Código", value=str(fila_original['codigo_lamina']))
+                            d_actualizada = st.text_input("Descripción", value=str(fila_original['descripcion']))
+                            q_actualizada = st.number_input("Cantidad", min_value=1, value=int(fila_original['cantidad'])) if nombre_tab != "Códigos SAP" else 1
+                            
+                            if st.form_submit_button("Guardar Cambios", use_container_width=True):
+                                modificar_registro_existente(id_edit, c_actualizado, d_actualizada, q_actualizada)
+                                st.session_state.mensaje_toast = "Modificado correctamente."
+                                st.rerun()
                     else:
                         st.info("No existen registros.")
 
             with c_del:
                 with st.expander("🗑️ Eliminar Petición"):
                     if not df_pedidos_base.empty:
-                        opciones_borrado = df_pedidos_base.apply(lambda r: f"ID: {r['id']} | {r['codigo_lamina']}", axis=1).tolist()
-                        seleccion_bajas = st.multiselect("Seleccionar peticiones a remover:", opciones_borrado, key=f"select_del_{nombre_tab}")
-                        
-                        if st.button("Ejecutar Eliminación", type="primary", key=f"btn_baja_{nombre_tab}"):
-                            for item in seleccion_bajas:
-                                remover_registro(int(item.split(" | ")[0].replace("ID: ", "")))
-                            st.session_state.mensaje_toast = "Registros eliminados."
-                            st.rerun()
+                        with st.form(key=f"form_del_{nombre_tab}"):
+                            opciones_borrado = df_pedidos_base.apply(lambda r: f"ID: {r['id']} | {r['codigo_lamina']}", axis=1).tolist()
+                            seleccion_bajas = st.multiselect("Seleccionar peticiones a remover:", opciones_borrado)
+                            
+                            if st.form_submit_button("Ejecutar Eliminación", type="primary"):
+                                for item in seleccion_bajas:
+                                    remover_registro(int(item.split(" | ")[0].replace("ID: ", "")))
+                                st.session_state.mensaje_toast = "Registros eliminados."
+                                st.rerun()
 
-        # ---------------------------------------------------------
         # FLUJO EXCLUSIVO PARA MODERADORES (DESPACHO)
-        # ---------------------------------------------------------
         if st.session_state.rol == "moderador" and nombre_tab != "Códigos SAP":
             st.subheader("🚚 Panel de Despachos")
             df_pendientes = df_pedidos_base[df_pedidos_base['pendientes'] > 0]
@@ -271,31 +313,30 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                 id_pet_seleccionada = int(seleccion_pet.split(" | ")[0].replace("Petición ID: ", ""))
                 max_disponible = int(seleccion_pet.split("Cantidad Pendiente: ")[1])
                 
-                cant_a_despachar = st.number_input("Indique la cantidad a despachar ahora:", min_value=1, max_value=max_disponible, value=1, key=f"cant_despacho_{nombre_tab}")
-                
-                if st.button("✅ Confirmar Despacho", use_container_width=True, type="primary", key=f"btn_conf_despacho_{nombre_tab}"):
-                    nuevo_saldo_pendiente = max_disponible - cant_a_despachar
-                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with st.form(key=f"form_despachar_{nombre_tab}"):
+                    cant_a_despachar = st.number_input("Indique la cantidad a despachar ahora:", min_value=1, max_value=max_disponible, value=1)
                     
-                    with conectar_bd() as conexion:
-                        with conexion.cursor() as cursor:
-                            cursor.execute("""
-                                INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes, parent_id)
-                                VALUES (%s, %s, '=', '=', 0, False, %s, %s, %s, %s)
-                            """, (nombre_tab, timestamp, st.session_state.usuario, cant_a_despachar, nuevo_saldo_pendiente, id_pet_seleccionada))
-                            
-                            cursor.execute("UPDATE traslados SET pendientes=%s WHERE id=%s", (nuevo_saldo_pendiente, id_pet_seleccionada))
-                    
-                    st.session_state.mensaje_toast = "Despacho ejecutado y registrado."
-                    st.rerun()
+                    if st.form_submit_button("✅ Confirmar Despacho", use_container_width=True, type="primary"):
+                        nuevo_saldo_pendiente = max_disponible - cant_a_despachar
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        with conectar_bd() as conexion:
+                            with conexion.cursor() as cursor:
+                                cursor.execute("""
+                                    INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes, parent_id)
+                                    VALUES (%s, %s, '=', '=', 0, False, %s, %s, %s, %s)
+                                """, (nombre_tab, timestamp, st.session_state.usuario, cant_a_despachar, nuevo_saldo_pendiente, id_pet_seleccionada))
+                                
+                                cursor.execute("UPDATE traslados SET pendientes=%s WHERE id=%s", (nuevo_saldo_pendiente, id_pet_seleccionada))
+                        
+                        st.session_state.mensaje_toast = "Despacho ejecutado y registrado."
+                        st.rerun()
             else:
                 st.success("🎉 No hay peticiones pendientes de despacho en esta pestaña.")
 
         st.write("#### 📊 Hoja de Trabajo Activa")
         
-        # ---------------------------------------------------------
         # RENDERIZADO DE LA TABLA
-        # ---------------------------------------------------------
         if nombre_tab == "Códigos SAP":
             df_tabla = df_datos[['id', 'codigo_lamina', 'descripcion']].copy() if not df_datos.empty else df_datos
             columnas_config = {
@@ -360,27 +401,27 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
 
         st.write("---")
         
-        # ---------------------------------------------------------
         # IMPORTACIÓN Y EXPORTACIÓN
-        # ---------------------------------------------------------
         b_import, b_export = st.columns(2)
         if st.session_state.rol in ["administrador", "boss"]:
             with b_import:
-                archivo_carga = st.file_uploader("Carga Masiva (.xlsx)", type=["xlsx"], key=f"up_{nombre_tab}")
-                if archivo_carga:
-                    try:
-                        df_excel = pd.read_excel(archivo_carga)
-                        df_excel.columns = [str(c).lower().strip() for c in df_excel.columns]
-                        for _, row_ex in df_excel.iterrows():
-                            c_excel = str(row_ex.get('codigo_lamina', row_ex.get('código', row_ex.get('codigo', 'N/A')))).strip()
-                            d_excel = str(row_ex.get('descripcion', row_ex.get('descripción', 'N/A'))).strip()
-                            try: q_excel = int(float(row_ex.get('cantidad', 1)))
-                            except: q_excel = 1
-                            agregar_nuevo_registro(nombre_tab, c_excel, d_excel, q_excel, st.session_state.usuario)
-                        st.session_state.mensaje_toast = "Base cargada."
-                        st.rerun()
-                    except:
-                        st.error("Error leyendo Excel.")
+                with st.form(key=f"form_up_{nombre_tab}"):
+                    archivo_carga = st.file_uploader("Carga Masiva (.xlsx)", type=["xlsx"])
+                    if st.form_submit_button("Subir Archivo"):
+                        if archivo_carga:
+                            try:
+                                df_excel = pd.read_excel(archivo_carga)
+                                df_excel.columns = [str(c).lower().strip() for c in df_excel.columns]
+                                for _, row_ex in df_excel.iterrows():
+                                    c_excel = str(row_ex.get('codigo_lamina', row_ex.get('código', row_ex.get('codigo', 'N/A')))).strip()
+                                    d_excel = str(row_ex.get('descripcion', row_ex.get('descripción', 'N/A'))).strip()
+                                    try: q_excel = int(float(row_ex.get('cantidad', 1)))
+                                    except: q_excel = 1
+                                    agregar_nuevo_registro(nombre_tab, c_excel, d_excel, q_excel, st.session_state.usuario)
+                                st.session_state.mensaje_toast = "Base cargada."
+                                st.rerun()
+                            except:
+                                st.error("Error leyendo Excel.")
 
         with b_export:
             df_salida = df_tabla.drop(columns=['id', 'parent_id'], errors='ignore') if not df_tabla.empty else df_tabla
@@ -391,38 +432,3 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                 key=f"dw_{nombre_tab}", type="primary", use_container_width=True
             )
-
-# 7. Panel de Administrador (Roles)
-if st.session_state.rol in ["administrador", "boss"]:
-    with tabs[4]: 
-        st.header("⚙️ Administración de Usuarios")
-        df_usuarios = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
-        st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
-        
-        a_c1, a_c2 = st.columns(2)
-        with a_c1:
-            st.subheader("Crear / Editar Usuario")
-            c_user = st.text_input("Usuario / Cédula", key="adm_user").strip()
-            p_user = st.text_input("Contraseña", key="adm_pass").strip()
-            r_user = st.selectbox("Rol", ["administrador", "moderador", "boss"], key="adm_rol")
-            if st.button("Guardar Usuario", use_container_width=True, key="adm_btn_save"):
-                if c_user and p_user:
-                    with conectar_bd() as conexion:
-                        with conexion.cursor() as cursor:
-                            cursor.execute("""
-                                INSERT INTO usuarios (cedula, password, rol) VALUES (%s, %s, %s) 
-                                ON CONFLICT (cedula) DO UPDATE SET password = EXCLUDED.password, rol = EXCLUDED.rol
-                            """, (c_user, p_user, r_user))
-                    st.session_state.mensaje_toast = "Usuario guardado."
-                    st.rerun()
-        
-        with a_c2:
-            if not df_usuarios.empty:
-                st.subheader("Eliminar Usuario")
-                user_del = st.selectbox("Seleccionar usuario:", df_usuarios['cedula'].tolist(), key="adm_del_sel")
-                if st.button("Eliminar Usuario", type="primary", use_container_width=True, key="adm_btn_del"):
-                    with conectar_bd() as conexion:
-                        with conexion.cursor() as cursor:
-                            cursor.execute("DELETE FROM usuarios WHERE cedula=%s", (user_del,))
-                    st.session_state.mensaje_toast = "Usuario eliminado."
-                    st.rerun()
