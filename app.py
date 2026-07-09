@@ -11,7 +11,7 @@ st.set_page_config(
     page_title="CLC Colchones - Gestión", 
     page_icon="🛏️", 
     layout="wide",
-    initial_sidebar_state="expanded" # El menú lateral empezará abierto
+    initial_sidebar_state="expanded"
 )
 
 # CSS limpio
@@ -167,7 +167,7 @@ def exportar_excel(df, nombre_hoja):
         sheet.freeze_panes = "A2"
     return output.getvalue()
 
-# 6. MENÚ DE NAVEGACIÓN (Sustituye a las pestañas problemáticas)
+# 6. MENÚ DE NAVEGACIÓN
 lista_pestanas_base = ["Minelba", "Kelvin", "Miguel", "Códigos SAP"]
 pestanas_visibles = lista_pestanas_base.copy()
 if st.session_state.rol in ["administrador", "boss"]:
@@ -177,13 +177,13 @@ st.sidebar.write("---")
 st.sidebar.subheader("📌 Navegación de Áreas")
 nombre_tab = st.sidebar.radio("Seleccione el espacio de trabajo:", pestanas_visibles)
 
-# Consulta global de SAP para usar en los selectores de los formularios
+# Consulta global de SAP
 df_sap_global = pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", engine)
 
 st.subheader(f"📂 Área de Trabajo: {nombre_tab}")
 
 # =========================================================
-# PANEL DE ADMINISTRADOR (ROLES)
+# PANEL DE ADMINISTRADOR
 # =========================================================
 if nombre_tab == "Panel de Administrador":
     st.write("⚙️ **Administración de Usuarios del Sistema**")
@@ -221,7 +221,7 @@ if nombre_tab == "Panel de Administrador":
                     st.rerun()
 
 # =========================================================
-# LÓGICA DE GESTIÓN DE LÁMINAS (Para el resto de áreas)
+# LÓGICA DE GESTIÓN DE LÁMINAS
 # =========================================================
 else:
     df_datos = obtener_registros(nombre_tab)
@@ -340,6 +340,12 @@ else:
 
     st.write("#### 📊 Hoja de Trabajo Activa")
     
+    # === CORRECCIÓN DEL ERROR AQUÍ ===
+    # Variables globales de permisos reubicadas para que siempre existan
+    es_readonly_general = (st.session_state.rol == "moderador")
+    permiso_verificar = st.session_state.rol in ["administrador", "boss"]
+    # =================================
+    
     # RENDERIZADO DE LA TABLA
     if nombre_tab == "Códigos SAP":
         df_tabla = df_datos[['id', 'codigo_lamina', 'descripcion']].copy() if not df_datos.empty else df_datos
@@ -362,9 +368,6 @@ else:
             df_tabla.loc[mascara_sub, 'codigo_lamina'] = "="
             df_tabla.loc[mascara_sub, 'descripcion'] = "="
             df_tabla.loc[mascara_sub, 'cantidad'] = "="
-
-        permiso_verificar = st.session_state.rol in ["administrador", "boss"]
-        es_readonly_general = (st.session_state.rol == "moderador")
 
         columnas_config = {
             "id": None, 
