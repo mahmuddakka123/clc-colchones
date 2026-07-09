@@ -447,3 +447,4 @@ if st.session_state.rol in ["administrador", "boss"]:
                                 cursor.execute("DELETE FROM usuarios WHERE cedula=%s", (user_del,))
                         st.session_state.mensaje_toast = "Usuario eliminado."
                         st.rerun()
+
