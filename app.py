@@ -344,6 +344,7 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             try:
                                 output = io.BytesIO()
                                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    # Exportamos el DataFrame completo con la info original para que el Excel sí la tenga
                                     df_datos.to_excel(writer, index=False, sheet_name=nombre_tab)
                                 st.download_button("Descargar Excel", data=output.getvalue(), file_name=f"Datos_{nombre_tab}.xlsx",
                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"btn_ex_{nombre_tab}")
@@ -469,7 +470,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             else:
                 df_tabla = df_datos.copy() if not df_datos.empty else pd.DataFrame()
                 if not df_tabla.empty:
-                    df_tabla['creado_por'] = df_tabla['creado_por'].fillna('Desconocido').astype(str).replace('nan', 'Desconocido')
                     df_tabla['verificado'] = df_tabla['verificado'].fillna(False).astype(bool)
                     df_tabla['codigo_lamina'] = df_tabla['codigo_lamina'].astype(str).replace('nan','')
                     df_tabla['descripcion'] = df_tabla['descripcion'].astype(str).replace('nan','')
@@ -480,17 +480,14 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
                     df_tabla.loc[mascara_sub, 'cantidad'] = "-"
                     
-                    # AQUÍ ESTÁ EL CAMBIO: Se oculta la hora y el autor para los despachos
-                    df_tabla.loc[mascara_sub, 'hora'] = "-"
-                    df_tabla.loc[mascara_sub, 'creado_por'] = "-"
+                    # ELIMINACIÓN TOTAL DE LAS COLUMNAS HORA Y CREADO_POR PARA LA INTERFAZ
+                    df_tabla = df_tabla.drop(columns=['hora', 'creado_por'], errors='ignore')
 
                 columnas_config = {
                     "id": None, "parent_id": None,
-                    "hora": st.column_config.TextColumn("Fecha", disabled=True),
                     "codigo_lamina": st.column_config.TextColumn("Código", disabled=True),
                     "descripcion": st.column_config.TextColumn("Descripción", disabled=True),
                     "cantidad": st.column_config.TextColumn("Solicitado", disabled=True),
-                    "creado_por": st.column_config.TextColumn("Autor", disabled=True),
                     "verificado": st.column_config.CheckboxColumn("Verific.", disabled=st.session_state.rol not in ["administrador", "boss"]),
                     "despacho": st.column_config.NumberColumn("Despachado", disabled=True),
                     "pendientes": st.column_config.NumberColumn("Pendiente", disabled=True),
