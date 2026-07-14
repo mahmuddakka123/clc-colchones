@@ -19,7 +19,6 @@ st.markdown("""
 
 # 2. Funciones de Utilidad (Hora de Venezuela)
 def obtener_hora_venezuela():
-    # Venezuela siempre es UTC-4 (ignora la hora del servidor)
     zona_horaria_vzla = datetime.timezone(datetime.timedelta(hours=-4))
     return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -65,7 +64,6 @@ if 'usuario' not in st.session_state:
 
 if st.session_state.usuario is None:
     st.title("Iniciar Sesión — CLC Colchones")
-    # Al usar st.form, presionar ENTER hace el Submit automáticamente
     with st.form("login_form"):
         user_in = st.text_input("Usuario / Cédula").strip()
         pass_in = st.text_input("Contraseña", type="password").strip()
@@ -132,7 +130,6 @@ def modificar_despacho_db(id_despacho, nueva_cantidad):
             diferencia = nueva_cantidad - cant_vieja
             
             if nueva_cantidad == 0:
-                # Si pone 0, elimina el despacho y devuelve todo al padre
                 cursor.execute("UPDATE traslados SET pendientes = pendientes + %s WHERE id=%s", (cant_vieja, parent_id))
                 cursor.execute("DELETE FROM traslados WHERE id=%s", (id_despacho,))
                 return True, "Despacho eliminado. Láminas devueltas a Pendientes."
@@ -154,16 +151,12 @@ df_sap_global = pd.read_sql_query("SELECT codigo_lamina, descripcion FROM trasla
 
 for idx, nombre_tab in enumerate(lista_pestanas_base):
     with tabs[idx]:
-        with st.container(): # EL CONTENEDOR ES VITAL PARA EVITAR QUE SE UNAN
+        with st.container():
             df_datos = obtener_registros(nombre_tab)
             df_pedidos_base = df_datos[df_datos['parent_id'].isna()] if not df_datos.empty else df_datos
             
-            # ---------------------------------------------------------
-            # CONTROLES EXCLUSIVOS ADMINISTRADORES / BOSS
-            # ---------------------------------------------------------
             if st.session_state.rol in ["administrador", "boss"]:
                 c_add, c_edit, c_del = st.columns(3)
-                
                 with c_add:
                     with st.expander("➕ Añadir Petición"):
                         if nombre_tab != "Códigos SAP":
@@ -175,7 +168,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 st.warning("SAP Vacío")
                                 def_cod, def_desc = "", ""
                             
-                            # Formulario para capturar ENTER sin borrar datos
                             with st.form(f"form_add_pet_{nombre_tab}", clear_on_submit=True):
                                 c_fin = st.text_input("Código", value=def_cod)
                                 d_fin = st.text_input("Descripción", value=def_desc)
@@ -194,7 +186,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                         agregar_nuevo_registro("Códigos SAP", c_s, d_s, 1, st.session_state.usuario)
                                         st.session_state.mensaje_toast = "SAP Actualizado."
                                         st.rerun()
-                
                 with c_edit:
                     with st.expander("📝 Modificar Petición"):
                         if not df_pedidos_base.empty:
@@ -233,14 +224,9 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                     st.session_state.mensaje_toast = "Eliminados."
                                     st.rerun()
 
-            # ---------------------------------------------------------
-            # CONTROLES PARA MODERADORES (DESPACHO Y EDICIÓN DE DESPACHO)
-            # ---------------------------------------------------------
             if st.session_state.rol == "moderador" and nombre_tab != "Códigos SAP":
                 st.subheader("🚚 Panel de Moderación y Despachos")
                 c_mod1, c_mod2 = st.columns(2)
-                
-                # PANEL DE CREAR DESPACHO
                 with c_mod1:
                     with st.expander("✅ Registrar Nuevo Despacho", expanded=True):
                         df_pendientes = df_pedidos_base[df_pedidos_base['pendientes'] > 0]
@@ -267,7 +253,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                         else:
                             st.info("No hay láminas pendientes.")
 
-                # PANEL DE EDITAR DESPACHO
                 with c_mod2:
                     with st.expander("✏️ Editar o Eliminar un Despacho"):
                         df_hijos = df_datos[df_datos['parent_id'].notna()] if not df_datos.empty else pd.DataFrame()
@@ -282,17 +267,12 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 new_q_desp = st.number_input("Nueva Cantidad Despachada:", min_value=0, value=cant_actual_desp, step=1)
                                 if st.form_submit_button("Modificar Despacho"):
                                     exito, msg = modificar_despacho_db(id_desp_edit, new_q_desp)
-                                    if exito:
-                                        st.session_state.mensaje_toast = msg
-                                    else:
-                                        st.session_state.error_toast = msg
+                                    if exito: st.session_state.mensaje_toast = msg
+                                    else: st.session_state.error_toast = msg
                                     st.rerun()
                         else:
                             st.info("No hay despachos registrados para editar.")
 
-            # ---------------------------------------------------------
-            # TABLA DE DATOS
-            # ---------------------------------------------------------
             st.write("---")
             if nombre_tab == "Códigos SAP":
                 df_tabla = df_datos[['id', 'codigo_lamina', 'descripcion']].copy() if not df_datos.empty else df_datos
@@ -329,7 +309,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             editor_k = f"dt_editor_{nombre_tab}"
             st.data_editor(df_tabla, column_config=columnas_config, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
             
-            # Guardado de verificaciones (Admin/Boss)
             if nombre_tab != "Códigos SAP" and st.session_state.rol in ["administrador", "boss"]:
                 if st.button("Guardar Checks (Verificaciones)", key=f"btn_chk_{nombre_tab}"):
                     cambios = st.session_state[editor_k].get("edited_rows", {})
@@ -343,11 +322,114 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                         st.session_state.mensaje_toast = "Verificaciones Guardadas"
                         st.rerun()
 
-# 7. Panel de Administrador (Roles)
+# 7. Panel de Administrador (Roles y Excel Automático)
 if st.session_state.rol in ["administrador", "boss"]:
     with tabs[4]: 
         with st.container():
-            st.header("⚙️ Administración de Usuarios")
-            df_us = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
-            st.dataframe(df_us, use_container_width=True, hide_index=True)
+            st.header("⚙️ Administración General y Datos")
+            
+            c_u1, c_u2 = st.columns(2)
+            
+            # --- GESTIÓN DE USUARIOS ---
+            with c_u1:
+                st.subheader("👥 Gestión de Usuarios")
+                df_us = pd.read_sql_query("SELECT cedula, rol, password FROM usuarios", engine)
+                st.dataframe(df_us, use_container_width=True, hide_index=True)
+                
+                with st.expander("➕ Crear o Modificar Usuario"):
+                    with st.form("form_add_user", clear_on_submit=True):
+                        new_cedula = st.text_input("Usuario / Cédula")
+                        new_pass = st.text_input("Contraseña")
+                        new_rol = st.selectbox("Rol", ["moderador", "administrador", "boss"])
+                        if st.form_submit_button("Guardar Usuario", type="primary"):
+                            if new_cedula and new_pass:
+                                with conectar_bd() as cx:
+                                    with cx.cursor() as cu:
+                                        cu.execute("""
+                                            INSERT INTO usuarios (cedula, password, rol) VALUES (%s, %s, %s)
+                                            ON CONFLICT (cedula) DO UPDATE SET password=EXCLUDED.password, rol=EXCLUDED.rol
+                                        """, (new_cedula, new_pass, new_rol))
+                                st.session_state.mensaje_toast = "Usuario registrado/modificado exitosamente."
+                                st.rerun()
+                            else:
+                                st.error("Llene todos los campos.")
+                                
+                with st.expander("🗑️ Eliminar Usuario"):
+                    with st.form("form_del_user"):
+                        del_cedula = st.selectbox("Seleccione un usuario", df_us['cedula'].tolist())
+                        if st.form_submit_button("Eliminar"):
+                            if del_cedula == st.session_state.usuario:
+                                st.error("No puedes eliminarte a ti mismo.")
+                            else:
+                                with conectar_bd() as cx:
+                                    with cx.cursor() as cu:
+                                        cu.execute("DELETE FROM usuarios WHERE cedula=%s", (del_cedula,))
+                                st.session_state.mensaje_toast = "Usuario eliminado."
+                                st.rerun()
 
+            # --- GESTIÓN DE EXCEL ---
+            with c_u2:
+                st.subheader("📊 Importar / Exportar Datos Excel")
+                
+                st.write("**Exportar Base de Datos Completa**")
+                df_export = pd.read_sql_query("SELECT * FROM traslados ORDER BY id ASC", engine)
+                if not df_export.empty:
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_export.to_excel(writer, index=False, sheet_name='Registros_Completos')
+                    
+                    st.download_button(
+                        label="📥 Descargar Toda la BD (.xlsx)",
+                        data=output.getvalue(),
+                        file_name=f"Backup_BD_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                
+                st.write("---")
+                st.write("**Importación Mágica (Modificador Automático)**")
+                st.info("Sube un Excel con las columnas `pestana`, `codigo_lamina`, `descripcion` y `cantidad`. Si el código ya existe, automáticamente acumula la cantidad o actualiza la descripción; de lo contrario, crea uno nuevo.")
+                uploaded_file = st.file_uploader("Cargar Archivo Excel", type=["xlsx", "xls"])
+                
+                if uploaded_file is not None:
+                    if st.button("Procesar Archivo e Integrar", type="primary", use_container_width=True):
+                        try:
+                            df_import = pd.read_excel(uploaded_file)
+                            if 'codigo_lamina' in df_import.columns and 'pestana' in df_import.columns:
+                                timestamp = obtener_hora_venezuela()
+                                count_new = 0
+                                count_upd = 0
+                                with conectar_bd() as cx:
+                                    with cx.cursor() as cu:
+                                        for _, row in df_import.iterrows():
+                                            pest = str(row['pestana'])
+                                            cod = str(row['codigo_lamina'])
+                                            desc = str(row.get('descripcion', ''))
+                                            cant = int(row.get('cantidad', 1)) if pd.notna(row.get('cantidad')) else 1
+                                            
+                                            # Verificamos si ya existe ese código matriz en esa pestaña
+                                            cu.execute("SELECT id, cantidad, pendientes FROM traslados WHERE pestana=%s AND codigo_lamina=%s AND parent_id IS NULL", (pest, cod))
+                                            existe = cu.fetchone()
+                                            
+                                            if existe:
+                                                id_bd, cant_vieja, pend_viejo = existe
+                                                if pest == "Códigos SAP":
+                                                    cu.execute("UPDATE traslados SET descripcion=%s WHERE id=%s", (desc, id_bd))
+                                                else:
+                                                    # Modificador Automático: Suma la cantidad nueva a la existente
+                                                    nueva_cant = cant_vieja + cant
+                                                    nuevo_pend = pend_viejo + cant
+                                                    cu.execute("UPDATE traslados SET cantidad=%s, pendientes=%s, descripcion=%s WHERE id=%s", (nueva_cant, nuevo_pend, desc, id_bd))
+                                                count_upd += 1
+                                            else:
+                                                pend_ini = cant if pest != "Códigos SAP" else 0
+                                                cu.execute("""
+                                                    INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes)
+                                                    VALUES (%s, %s, %s, %s, %s, False, %s, 0, %s)
+                                                """, (pest, timestamp, cod, desc, cant, st.session_state.usuario, pend_ini))
+                                                count_new += 1
+                                st.success(f"¡Integración Completa! Se añadieron {count_new} registros nuevos y se acumularon/actualizaron {count_upd} existentes.")
+                            else:
+                                st.error("Asegúrate de que el Excel tenga las columnas: 'pestana' y 'codigo_lamina'.")
+                        except Exception as e:
+                            st.error(f"Error al procesar: {e}")
