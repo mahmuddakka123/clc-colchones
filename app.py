@@ -21,7 +21,8 @@ st.markdown("""
 
 def obtener_hora_venezuela():
     zona_horaria_vzla = datetime.timezone(datetime.timedelta(hours=-4))
-    return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M:%S")
+    # Ahora solo devuelve Año-Mes-Día Hora:Minutos
+    return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M")
 
 # ==========================================
 # 2. Motor de Base de Datos Seguro
@@ -73,19 +74,15 @@ if conn:
 # 3. Módulo de Auto-Adaptación de Excel
 # ==========================================
 def adaptar_excel_automaticamente(df):
-    """Convierte cualquier Excel desordenado al formato estricto requerido."""
     try:
         if df.empty: return pd.DataFrame()
 
-        # 1. Limpiar encabezados
         df.columns = df.columns.astype(str).str.lower().str.strip()
 
-        # 2. Diccionarios de posibles nombres (Alias)
         alias_cod = ['codigo_lamina', 'codigo', 'cod', 'sku', 'material', 'id', 'item', 'artículo']
         alias_desc = ['descripcion', 'desc', 'detalle', 'nombre', 'producto']
         alias_cant = ['cantidad', 'cant', 'q', 'qty', 'unidad', 'unidades']
 
-        # Encontrar columnas reales
         col_cod, col_desc, col_cant = None, None, None
 
         for col in df.columns:
@@ -93,36 +90,29 @@ def adaptar_excel_automaticamente(df):
             elif not col_desc and any(a in col for a in alias_desc): col_desc = col
             elif not col_cant and any(a in col for a in alias_cant): col_cant = col
 
-        # 3. Plan B: Si no encuentra por nombre, asume por posición (si hay al menos 1 columna)
         columnas_disp = list(df.columns)
         if not col_cod and len(columnas_disp) > 0: col_cod = columnas_disp[0]
         if not col_desc and len(columnas_disp) > 1: col_desc = columnas_disp[1]
         if not col_cant and len(columnas_disp) > 2: col_cant = columnas_disp[2]
 
-        if not col_cod: return pd.DataFrame() # Archivo totalmente ilegible
+        if not col_cod: return pd.DataFrame() 
 
-        # 4. Renombrar y estructurar
         rename_dict = {col_cod: 'codigo_lamina'}
         if col_desc: rename_dict[col_desc] = 'descripcion'
         if col_cant: rename_dict[col_cant] = 'cantidad'
         df = df.rename(columns=rename_dict)
 
-        # Rellenar columnas faltantes por si el excel solo tenía 1 o 2 columnas
         if 'descripcion' not in df.columns: df['descripcion'] = "Sin descripción"
         if 'cantidad' not in df.columns: df['cantidad'] = 1
 
-        # 5. Sanitizar y forzar tipos de datos para evitar errores de pandas/SQL
         df['codigo_lamina'] = df['codigo_lamina'].astype(str).str.strip().replace('nan', '')
         df['descripcion'] = df['descripcion'].astype(str).str.strip().replace('nan', '')
-        
-        # Extraer solo números de la cantidad y si falla, poner 1
         df['cantidad'] = pd.to_numeric(df['cantidad'], errors='coerce').fillna(1).astype(int)
 
-        # Filtrar filas vacías
         df = df[df['codigo_lamina'] != '']
         return df[['codigo_lamina', 'descripcion', 'cantidad']]
     except Exception as e:
-        return pd.DataFrame() # Retorna vacío si falla catastroficamente, evitando el crash
+        return pd.DataFrame() 
 
 # ==========================================
 # 4. Funciones de Base de Datos y Operaciones
@@ -141,7 +131,7 @@ def obtener_registros(pestana):
 def agregar_nuevo_registro(pestana, codigo, descripcion, cantidad, autor):
     try:
         timestamp = obtener_hora_venezuela()
-        inicial_pendiente = cantidad if pestana != "Códigos SAP" else 0
+        inicial_pendiente = int(cantidad) if pestana != "Códigos SAP" else 0
         conn = conectar_bd()
         with conn:
             with conn.cursor() as cursor:
@@ -151,23 +141,29 @@ def agregar_nuevo_registro(pestana, codigo, descripcion, cantidad, autor):
                 """, (pestana, timestamp, str(codigo), str(descripcion), int(cantidad), False, autor, inicial_pendiente))
         conn.close()
     except Exception as e:
-        pass # Falla silenciosa segura
+        pass 
 
 def modificar_despacho_db(id_despacho, nueva_cantidad):
     try:
+        # Conversión ESTRICTA a tipos nativos para que psycopg2 no explote
+        id_despacho = int(id_despacho)
+        nueva_cantidad = int(nueva_cantidad)
+        
         conn = conectar_bd()
         with conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT despacho, parent_id FROM traslados WHERE id=%s", (id_despacho,))
                 info = cursor.fetchone()
                 if not info: return False, "Error: Despacho no existe."
-                cant_vieja, parent_id = info
+                
+                cant_vieja = int(info[0])
+                parent_id = int(info[1])
                 
                 cursor.execute("SELECT pendientes FROM traslados WHERE id=%s", (parent_id,))
                 padre_info = cursor.fetchone()
                 if not padre_info: return False, "Error: Pedido base eliminado."
-                pendientes_actuales = padre_info[0]
                 
+                pendientes_actuales = int(padre_info[0])
                 diferencia = nueva_cantidad - cant_vieja
                 
                 if nueva_cantidad == 0:
@@ -184,7 +180,7 @@ def modificar_despacho_db(id_despacho, nueva_cantidad):
                     conn.close()
                     return True, "Despacho actualizado."
     except Exception as e:
-        return False, "Error en base de datos al modificar."
+        return False, f"Error en base de datos: {e}"
 
 # ==========================================
 # 5. Sistema de Sesión
@@ -239,7 +235,6 @@ if st.session_state.rol in ["administrador", "boss"]: pestanas_visibles.append("
 
 tabs = st.tabs(pestanas_visibles)
 
-# Precargar SAP global y asegurar que no lance error si está vacío
 try:
     df_sap_global = pd.read_sql_query("SELECT codigo_lamina, descripcion FROM traslados WHERE pestana='Códigos SAP'", engine)
 except:
@@ -270,8 +265,11 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             with st.form(f"form_add_pet_{nombre_tab}", clear_on_submit=True):
                                 c_fin = st.text_input("Código", value=def_cod)
                                 d_fin = st.text_input("Descripción", value=def_desc)
-                                q_fin = st.number_input("Cantidad", min_value=1, value=1, step=1)
+                                # REEMPLAZO: text_input captura el 'Enter' inmediatamente
+                                q_fin_str = st.text_input("Cantidad", value="1")
+                                
                                 if st.form_submit_button("Registrar (Presione Enter)", type="primary"):
+                                    q_fin = int(q_fin_str) if q_fin_str.isdigit() else 1
                                     if c_fin.strip():
                                         agregar_nuevo_registro(nombre_tab, c_fin, d_fin, q_fin, st.session_state.usuario)
                                         st.session_state.mensaje_toast = "Registrado."
@@ -299,8 +297,13 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 with st.form(f"form_mod_pet_{nombre_tab}"):
                                     c_upd = st.text_input("Código", value=str(fila_m.get('codigo_lamina', '')))
                                     d_upd = st.text_input("Descripción", value=str(fila_m.get('descripcion', '')))
-                                    q_upd = st.number_input("Cantidad", min_value=1, value=int(fila_m.get('cantidad', 1))) if nombre_tab != "Códigos SAP" else 1
+                                    
+                                    # REEMPLAZO text_input
+                                    val_cant_m = str(int(fila_m.get('cantidad', 1))) if nombre_tab != "Códigos SAP" else "1"
+                                    q_upd_str = st.text_input("Cantidad", value=val_cant_m)
+                                    
                                     if st.form_submit_button("Actualizar"):
+                                        q_upd = int(q_upd_str) if q_upd_str.isdigit() else 1
                                         conn = conectar_bd()
                                         if conn:
                                             with conn.cursor() as cu:
@@ -357,11 +360,9 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             if st.button("Procesar Archivo", key=f"btn_proc_{nombre_tab}"):
                                 with st.spinner("Limpiando e integrando datos..."):
                                     try:
-                                        # Soporte para CSV y Excel
                                         if uploaded_file.name.endswith('.csv'): df_import = pd.read_csv(uploaded_file)
                                         else: df_import = pd.read_excel(uploaded_file)
                                         
-                                        # APLICAR ADAPTADOR MÁGICO
                                         df_import = adaptar_excel_automaticamente(df_import)
                                         
                                         if not df_import.empty:
@@ -416,8 +417,13 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 max_disp = int(sel_pet_desp.split("Pend: ")[1])
                                 
                                 with st.form(f"form_new_despacho_{nombre_tab}", clear_on_submit=True):
-                                    q_despacho = st.number_input("Cantidad a despachar:", min_value=1, max_value=max_disp, value=1, step=1)
+                                    # REEMPLAZO text_input
+                                    q_despacho_str = st.text_input("Cantidad a despachar:", value="1")
+                                    
                                     if st.form_submit_button("Confirmar Despacho", type="primary"):
+                                        q_despacho = int(q_despacho_str) if q_despacho_str.isdigit() else 1
+                                        if q_despacho > max_disp: q_despacho = max_disp # Evitar superar el máximo si lo teclean
+                                        
                                         timestamp = obtener_hora_venezuela()
                                         conn = conectar_bd()
                                         if conn:
@@ -445,8 +451,11 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 
                                 with st.form(f"form_edit_despacho_{nombre_tab}"):
                                     st.caption("Pon **0** para eliminar y devolver.")
-                                    new_q_desp = st.number_input("Nueva Cant:", min_value=0, value=cant_actual_desp, step=1)
+                                    # REEMPLAZO text_input
+                                    new_q_desp_str = st.text_input("Nueva Cant:", value=str(cant_actual_desp))
+                                    
                                     if st.form_submit_button("Modificar"):
+                                        new_q_desp = int(new_q_desp_str) if new_q_desp_str.isdigit() else 0
                                         exito, msg = modificar_despacho_db(id_desp_edit, new_q_desp)
                                         if exito: st.session_state.mensaje_toast = msg
                                         else: st.session_state.error_toast = msg
@@ -462,6 +471,9 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             else:
                 df_tabla = df_datos.copy() if not df_datos.empty else pd.DataFrame()
                 if not df_tabla.empty:
+                    # CORRECCIÓN DE AUTORES OCULTOS (limpiando nulos que Pandas esconde)
+                    df_tabla['creado_por'] = df_tabla['creado_por'].fillna('Desconocido').astype(str).replace('nan', 'Desconocido')
+                    
                     df_tabla['verificado'] = df_tabla['verificado'].fillna(False).astype(bool)
                     df_tabla['codigo_lamina'] = df_tabla['codigo_lamina'].astype(str).replace('nan','')
                     df_tabla['descripcion'] = df_tabla['descripcion'].astype(str).replace('nan','')
@@ -485,7 +497,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                 }
 
             editor_k = f"dt_editor_{nombre_tab}"
-            # Renderizado seguro de tabla
             st.data_editor(df_tabla, column_config=columnas_config, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
             
             if nombre_tab != "Códigos SAP" and st.session_state.rol in ["administrador", "boss"]:
@@ -497,7 +508,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             with conn.cursor() as cu:
                                 for idx_str, d_cam in cambios.items():
                                     if "verificado" in d_cam:
-                                        # Extraer ID con seguridad
                                         id_bd = int(df_tabla.iloc[int(idx_str)]['id'])
                                         cu.execute("UPDATE traslados SET verificado=%s WHERE id=%s", (bool(d_cam["verificado"]), id_bd))
                             conn.close()
