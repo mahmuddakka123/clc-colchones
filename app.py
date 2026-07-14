@@ -21,7 +21,6 @@ st.markdown("""
 
 def obtener_hora_venezuela():
     zona_horaria_vzla = datetime.timezone(datetime.timedelta(hours=-4))
-    # Ahora solo devuelve Año-Mes-Día Hora:Minutos
     return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M")
 
 # ==========================================
@@ -133,24 +132,27 @@ def agregar_nuevo_registro(pestana, codigo, descripcion, cantidad, autor):
         timestamp = obtener_hora_venezuela()
         inicial_pendiente = int(cantidad) if pestana != "Códigos SAP" else 0
         conn = conectar_bd()
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s)
-                """, (pestana, timestamp, str(codigo), str(descripcion), int(cantidad), False, autor, inicial_pendiente))
-        conn.close()
+        if conn:
+            with conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO traslados (pestana, hora, codigo_lamina, descripcion, cantidad, verificado, creado_por, despacho, pendientes) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s)
+                    """, (pestana, timestamp, str(codigo), str(descripcion), int(cantidad), False, autor, inicial_pendiente))
+            conn.close()
     except Exception as e:
         pass 
 
 def modificar_despacho_db(id_despacho, nueva_cantidad):
+    conn = None
     try:
-        # Conversión ESTRICTA a tipos nativos para que psycopg2 no explote
         id_despacho = int(id_despacho)
         nueva_cantidad = int(nueva_cantidad)
         
         conn = conectar_bd()
-        with conn:
+        if not conn: return False, "Error: Sin conexión a base de datos."
+        
+        with conn: 
             with conn.cursor() as cursor:
                 cursor.execute("SELECT despacho, parent_id FROM traslados WHERE id=%s", (id_despacho,))
                 info = cursor.fetchone()
@@ -169,18 +171,18 @@ def modificar_despacho_db(id_despacho, nueva_cantidad):
                 if nueva_cantidad == 0:
                     cursor.execute("UPDATE traslados SET pendientes = pendientes + %s WHERE id=%s", (cant_vieja, parent_id))
                     cursor.execute("DELETE FROM traslados WHERE id=%s", (id_despacho,))
-                    conn.close()
                     return True, "Despacho eliminado. Láminas devueltas."
                 else:
                     if diferencia > 0 and pendientes_actuales < diferencia:
-                        conn.close()
-                        return False, "Láminas insuficientes."
+                        return False, "Láminas insuficientes para aumentar el despacho."
                     cursor.execute("UPDATE traslados SET despacho=%s WHERE id=%s", (nueva_cantidad, id_despacho))
                     cursor.execute("UPDATE traslados SET pendientes = pendientes - %s WHERE id=%s", (diferencia, parent_id))
-                    conn.close()
-                    return True, "Despacho actualizado."
+                    return True, "Despacho actualizado correctamente."
     except Exception as e:
-        return False, f"Error en base de datos: {e}"
+        return False, f"Error interno: {e}"
+    finally:
+        if conn:
+            conn.close()
 
 # ==========================================
 # 5. Sistema de Sesión
@@ -265,7 +267,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             with st.form(f"form_add_pet_{nombre_tab}", clear_on_submit=True):
                                 c_fin = st.text_input("Código", value=def_cod)
                                 d_fin = st.text_input("Descripción", value=def_desc)
-                                # REEMPLAZO: text_input captura el 'Enter' inmediatamente
                                 q_fin_str = st.text_input("Cantidad", value="1")
                                 
                                 if st.form_submit_button("Registrar (Presione Enter)", type="primary"):
@@ -298,7 +299,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                     c_upd = st.text_input("Código", value=str(fila_m.get('codigo_lamina', '')))
                                     d_upd = st.text_input("Descripción", value=str(fila_m.get('descripcion', '')))
                                     
-                                    # REEMPLAZO text_input
                                     val_cant_m = str(int(fila_m.get('cantidad', 1))) if nombre_tab != "Códigos SAP" else "1"
                                     q_upd_str = st.text_input("Cantidad", value=val_cant_m)
                                     
@@ -417,12 +417,11 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 max_disp = int(sel_pet_desp.split("Pend: ")[1])
                                 
                                 with st.form(f"form_new_despacho_{nombre_tab}", clear_on_submit=True):
-                                    # REEMPLAZO text_input
                                     q_despacho_str = st.text_input("Cantidad a despachar:", value="1")
                                     
                                     if st.form_submit_button("Confirmar Despacho", type="primary"):
                                         q_despacho = int(q_despacho_str) if q_despacho_str.isdigit() else 1
-                                        if q_despacho > max_disp: q_despacho = max_disp # Evitar superar el máximo si lo teclean
+                                        if q_despacho > max_disp: q_despacho = max_disp
                                         
                                         timestamp = obtener_hora_venezuela()
                                         conn = conectar_bd()
@@ -451,7 +450,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                                 
                                 with st.form(f"form_edit_despacho_{nombre_tab}"):
                                     st.caption("Pon **0** para eliminar y devolver.")
-                                    # REEMPLAZO text_input
                                     new_q_desp_str = st.text_input("Nueva Cant:", value=str(cant_actual_desp))
                                     
                                     if st.form_submit_button("Modificar"):
@@ -471,9 +469,7 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             else:
                 df_tabla = df_datos.copy() if not df_datos.empty else pd.DataFrame()
                 if not df_tabla.empty:
-                    # CORRECCIÓN DE AUTORES OCULTOS (limpiando nulos que Pandas esconde)
                     df_tabla['creado_por'] = df_tabla['creado_por'].fillna('Desconocido').astype(str).replace('nan', 'Desconocido')
-                    
                     df_tabla['verificado'] = df_tabla['verificado'].fillna(False).astype(bool)
                     df_tabla['codigo_lamina'] = df_tabla['codigo_lamina'].astype(str).replace('nan','')
                     df_tabla['descripcion'] = df_tabla['descripcion'].astype(str).replace('nan','')
@@ -483,6 +479,10 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     df_tabla.loc[mascara_sub, 'codigo_lamina'] = "↳"
                     df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
                     df_tabla.loc[mascara_sub, 'cantidad'] = "-"
+                    
+                    # AQUÍ ESTÁ EL CAMBIO: Se oculta la hora y el autor para los despachos
+                    df_tabla.loc[mascara_sub, 'hora'] = "-"
+                    df_tabla.loc[mascara_sub, 'creado_por'] = "-"
 
                 columnas_config = {
                     "id": None, "parent_id": None,
