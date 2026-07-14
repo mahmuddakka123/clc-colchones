@@ -21,6 +21,7 @@ st.markdown("""
 
 def obtener_hora_venezuela():
     zona_horaria_vzla = datetime.timezone(datetime.timedelta(hours=-4))
+    # Ya guarda en formato YYYY-MM-DD HH:MM (sin segundos)
     return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M")
 
 # ==========================================
@@ -466,6 +467,9 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
             if nombre_tab == "Códigos SAP":
                 df_tabla = df_datos[['id', 'codigo_lamina', 'descripcion']].copy() if not df_datos.empty else pd.DataFrame(columns=['id','codigo_lamina','descripcion'])
                 columnas_config = {"id": None, "codigo_lamina": st.column_config.TextColumn("Código SAP", disabled=True), "descripcion": st.column_config.TextColumn("Descripción de Material", disabled=True)}
+                orden_sap = ["codigo_lamina", "descripcion"]
+                editor_k = f"dt_editor_sap_{nombre_tab}"
+                st.data_editor(df_tabla, column_config=columnas_config, column_order=orden_sap, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
             else:
                 df_tabla = df_datos.copy() if not df_datos.empty else pd.DataFrame()
                 if not df_tabla.empty:
@@ -474,17 +478,29 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     df_tabla['descripcion'] = df_tabla['descripcion'].astype(str).replace('nan','')
                     df_tabla['cantidad'] = df_tabla['cantidad'].astype(str)
                     
-                    mascara_sub = df_tabla['parent_id'].notna()
-                    df_tabla.loc[mascara_sub, 'codigo_lamina'] = "↳"
-                    df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
-                    df_tabla.loc[mascara_sub, 'cantidad'] = "-"
+                    # Aseguramos que Fecha y Hora queden sin los segundos (hasta el minuto: 16 caracteres)
+                    if 'hora' in df_tabla.columns:
+                        df_tabla['hora'] = df_tabla['hora'].astype(str).str[:16].replace('nan', '')
+                    if 'creado_por' in df_tabla.columns:
+                        df_tabla['creado_por'] = df_tabla['creado_por'].fillna('Desconocido').astype(str).replace('nan', 'Desconocido')
                     
-                    # DESTRUCCIÓN DEFINITIVA DE LAS COLUMNAS FANTASMAS QUE ESTÁN EN TU BASE DE DATOS
-                    columnas_a_eliminar = ['hora_despacho', 'autor_despacho', 'hora', 'creado_por']
+                    mascara_sub = df_tabla['parent_id'].notna()
+                    if len(df_tabla[mascara_sub]) > 0:
+                        df_tabla.loc[mascara_sub, 'codigo_lamina'] = "↳"
+                        df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
+                        df_tabla.loc[mascara_sub, 'cantidad'] = "-"
+                        # Ocultamos la hora y el autor solo en los despachos (filas hijas)
+                        if 'hora' in df_tabla.columns: df_tabla.loc[mascara_sub, 'hora'] = "-"
+                        if 'creado_por' in df_tabla.columns: df_tabla.loc[mascara_sub, 'creado_por'] = "-"
+                    
+                    # DESTRUCCIÓN EXCLUSIVA DE LAS COLUMNAS FANTASMAS Y LA PESTAÑA
+                    columnas_a_eliminar = ['hora_despacho', 'autor_despacho', 'pestana']
                     df_tabla = df_tabla.drop(columns=columnas_a_eliminar, errors='ignore')
 
                 columnas_config = {
                     "id": None, "parent_id": None,
+                    "hora": st.column_config.TextColumn("Fecha y Hora", disabled=True),
+                    "creado_por": st.column_config.TextColumn("Autor", disabled=True),
                     "codigo_lamina": st.column_config.TextColumn("Código", disabled=True),
                     "descripcion": st.column_config.TextColumn("Descripción", disabled=True),
                     "cantidad": st.column_config.TextColumn("Solicitado", disabled=True),
@@ -492,9 +508,15 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     "despacho": st.column_config.NumberColumn("Despachado", disabled=True),
                     "pendientes": st.column_config.NumberColumn("Pendiente", disabled=True),
                 }
+                
+                # Definimos el orden en el que quieres ver las columnas (Autor y Fecha incluidas, Pestaña fuera)
+                orden = ["hora", "creado_por", "codigo_lamina", "descripcion", "cantidad", "despacho", "pendientes", "verificado"]
 
-            editor_k = f"dt_editor_{nombre_tab}"
-            st.data_editor(df_tabla, column_config=columnas_config, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
+                editor_k = f"dt_editor_{nombre_tab}"
+                if not df_tabla.empty:
+                    st.data_editor(df_tabla, column_config=columnas_config, column_order=orden, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
+                else:
+                    st.data_editor(df_tabla, column_config=columnas_config, hide_index=True, use_container_width=True, disabled=(st.session_state.rol == "moderador"), key=editor_k)
             
             if nombre_tab != "Códigos SAP" and st.session_state.rol in ["administrador", "boss"]:
                 if st.button("Guardar Checks (Verificaciones)", key=f"btn_chk_{nombre_tab}"):
