@@ -344,7 +344,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                             try:
                                 output = io.BytesIO()
                                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                    # Exportamos el DataFrame completo con la info original para que el Excel sí la tenga
                                     df_datos.to_excel(writer, index=False, sheet_name=nombre_tab)
                                 st.download_button("Descargar Excel", data=output.getvalue(), file_name=f"Datos_{nombre_tab}.xlsx",
                                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"btn_ex_{nombre_tab}")
@@ -480,8 +479,9 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
                     df_tabla.loc[mascara_sub, 'cantidad'] = "-"
                     
-                    # ELIMINACIÓN TOTAL DE LAS COLUMNAS HORA Y CREADO_POR PARA LA INTERFAZ
-                    df_tabla = df_tabla.drop(columns=['hora', 'creado_por'], errors='ignore')
+                    # DESTRUCCIÓN DEFINITIVA DE LAS COLUMNAS FANTASMAS QUE ESTÁN EN TU BASE DE DATOS
+                    columnas_a_eliminar = ['hora_despacho', 'autor_despacho', 'hora', 'creado_por']
+                    df_tabla = df_tabla.drop(columns=columnas_a_eliminar, errors='ignore')
 
                 columnas_config = {
                     "id": None, "parent_id": None,
