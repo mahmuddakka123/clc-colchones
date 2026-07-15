@@ -4,7 +4,6 @@ import psycopg2
 from sqlalchemy import create_engine
 import datetime
 import io
-import re
 
 # ==========================================
 # 1. Configuración y Estilos
@@ -21,7 +20,6 @@ st.markdown("""
 
 def obtener_hora_venezuela():
     zona_horaria_vzla = datetime.timezone(datetime.timedelta(hours=-4))
-    # Ya guarda en formato YYYY-MM-DD HH:MM (sin segundos)
     return datetime.datetime.now(zona_horaria_vzla).strftime("%Y-%m-%d %H:%M")
 
 # ==========================================
@@ -478,7 +476,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     df_tabla['descripcion'] = df_tabla['descripcion'].astype(str).replace('nan','')
                     df_tabla['cantidad'] = df_tabla['cantidad'].astype(str)
                     
-                    # Aseguramos que Fecha y Hora queden sin los segundos (hasta el minuto: 16 caracteres)
                     if 'hora' in df_tabla.columns:
                         df_tabla['hora'] = df_tabla['hora'].astype(str).str[:16].replace('nan', '')
                     if 'creado_por' in df_tabla.columns:
@@ -486,14 +483,12 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     
                     mascara_sub = df_tabla['parent_id'].notna()
                     if len(df_tabla[mascara_sub]) > 0:
-                        df_tabla.loc[mascara_sub, 'codigo_lamina'] = "↳"
-                        df_tabla.loc[mascara_sub, 'descripcion'] = "Despacho"
-                        df_tabla.loc[mascara_sub, 'cantidad'] = "-"
-                        # Ocultamos la hora y el autor solo en los despachos (filas hijas)
-                        if 'hora' in df_tabla.columns: df_tabla.loc[mascara_sub, 'hora'] = "-"
-                        if 'creado_por' in df_tabla.columns: df_tabla.loc[mascara_sub, 'creado_por'] = "-"
+                        # Reemplazamos la lógica para mostrar explícitamente el signo "=" 
+                        # Mantenemos intacta la fecha de despacho real y el autor
+                        df_tabla.loc[mascara_sub, 'codigo_lamina'] = "="
+                        df_tabla.loc[mascara_sub, 'descripcion'] = "="
+                        df_tabla.loc[mascara_sub, 'cantidad'] = "="
                     
-                    # DESTRUCCIÓN EXCLUSIVA DE LAS COLUMNAS FANTASMAS Y LA PESTAÑA
                     columnas_a_eliminar = ['hora_despacho', 'autor_despacho', 'pestana']
                     df_tabla = df_tabla.drop(columns=columnas_a_eliminar, errors='ignore')
 
@@ -509,7 +504,6 @@ for idx, nombre_tab in enumerate(lista_pestanas_base):
                     "pendientes": st.column_config.NumberColumn("Pendiente", disabled=True),
                 }
                 
-                # Definimos el orden en el que quieres ver las columnas (Autor y Fecha incluidas, Pestaña fuera)
                 orden = ["hora", "creado_por", "codigo_lamina", "descripcion", "cantidad", "despacho", "pendientes", "verificado"]
 
                 editor_k = f"dt_editor_{nombre_tab}"
